@@ -49,13 +49,15 @@ class VintixRenderer : GLSurfaceView.Renderer {
          * CRT scanlines, film grain, color grading, vignette, etc.
          *
          * Pipeline (stack order is intentional for future passes / uniforms):
-         * lens (CA + edge softness) → color grade → pseudo-halation → radial vignette.
+         * lens (CA + edge softness) → color grade → pseudo-halation → CCD clarity → micro-contrast
+         * → CCD sensor noise (uNoisePhase) → radial vignette.
          */
         const val CAMERA_FRAGMENT_SHADER = """
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTexCoord;
             uniform samplerExternalOES uTexture;
+            uniform float uNoisePhase;
 
             float vnx_luma709(vec3 c) {
                 return dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -151,6 +153,56 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 return acc * (0.064 / 4.0);
             }
 
+            vec3 vnx_ccd_sensor_clarity(samplerExternalOES tex, vec2 uv, vec3 graded) {
+                vec2 du = vec2(0.0009, 0.0);
+                vec2 dv = vec2(0.0, 0.00093);
+                vec3 avg = texture2D(tex, uv + du).rgb + texture2D(tex, uv - du).rgb
+                         + texture2D(tex, uv + dv).rgb + texture2D(tex, uv - dv).rgb;
+                avg *= 0.25;
+                vec3 rawC = texture2D(tex, uv).rgb;
+                float d = vnx_luma709(rawC - avg);
+                d = clamp(d, -0.042, 0.042);
+                float edge = smoothstep(0.006, 0.11, abs(d));
+                float gain = 0.31 * (0.58 + 0.42 * edge);
+                float yg = max(vnx_luma709(graded), 0.02);
+                vec3 ratio = graded / yg;
+                return graded + gain * d * ratio;
+            }
+
+            vec3 vnx_ccd_micro_contrast(vec3 c) {
+                float y = vnx_luma709(c);
+                vec3 g = vec3(y);
+                float bell = smoothstep(0.1, 0.36, y) * (1.0 - smoothstep(0.56, 0.93, y));
+                float punch = 1.0 + 0.032 * bell;
+                return g + (c - g) * punch;
+            }
+
+            float vnx_hash13(vec3 p) {
+                p = fract(p * 0.1031);
+                p += dot(p, p.zxy + 33.33);
+                return fract((p.x + p.y) * p.z);
+            }
+
+            vec3 vnx_ccd_sensor_noise(vec3 c, float phase) {
+                vec2 fc = gl_FragCoord.xy * 0.68;
+                vec3 h0 = vec3(fc, phase * 311.7);
+                float nL = vnx_hash13(h0) - 0.5;
+                float nR = vnx_hash13(h0 + vec3(19.2, 2.7, 1.1)) - 0.5;
+                float nB = vnx_hash13(h0 + vec3(3.3, 61.0, 2.4)) - 0.5;
+                float y = vnx_luma709(c);
+                float hiClean = smoothstep(0.52, 0.87, y);
+                float w = (1.0 - hiClean);
+                w *= mix(1.15, 0.94, smoothstep(0.0, 0.48, y));
+                float ampL = 0.0102;
+                float ampC = 0.0049;
+                vec3 o = c;
+                o += nL * ampL * w;
+                o.r += nR * ampC * w;
+                o.b += nB * ampC * w;
+                o.g += (nL * 0.38 + nR * 0.28 + nB * 0.34) * ampC * w * 0.42;
+                return o;
+            }
+
             vec4 vnx_retro_color_pipeline(samplerExternalOES tex, vec2 uv) {
                 vec4 lc = vnx_lens_edge_capture(tex, uv);
                 vec3 c = lc.rgb;
@@ -164,6 +216,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 float yb = vnx_luma709(c);
                 float damp = 1.0 - 0.38 * smoothstep(0.62, 0.96, yb);
                 c = clamp(c + halo * damp, 0.0, 1.0);
+                c = clamp(vnx_ccd_sensor_clarity(tex, uv, c), 0.0, 1.0);
+                c = clamp(vnx_ccd_micro_contrast(c), 0.0, 1.0);
+                c = clamp(vnx_ccd_sensor_noise(c, uNoisePhase), 0.0, 1.0);
                 c = vnx_radial_vignette(c, uv);
                 return vec4(clamp(c, 0.0, 1.0), lc.a);
             }
@@ -179,6 +234,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private var oesTextureId: Int = 0
     private var textureUniformLocation: Int = 0
     private var texMatrixUniformLocation: Int = 0
+    private var noisePhaseUniformLocation: Int = -1
+    private var noisePhase: Float = 0f
 
     /** The SurfaceTexture that receives camera frames. Created on the GL thread. */
     private var surfaceTexture: SurfaceTexture? = null
@@ -218,6 +275,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
         textureUniformLocation = shaderProgram.getUniformLocation("uTexture")
         texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
+        noisePhaseUniformLocation = shaderProgram.getUniformLocation("uNoisePhase")
 
         // Initialize geometry
         quad = TexturedQuad()
@@ -258,6 +316,11 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
         // Pass the texture transform matrix
         GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, texTransformMatrix, 0)
+
+        noisePhase = (noisePhase + 0.019f).rem(1f)
+        if (noisePhaseUniformLocation >= 0) {
+            GLES20.glUniform1f(noisePhaseUniformLocation, noisePhase)
+        }
 
         // Bind OES texture to unit 0
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
