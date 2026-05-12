@@ -28,6 +28,7 @@ import com.srihari.vintix.camera.CameraManager
 import com.srihari.vintix.camera.PhotoCaptureManager
 import com.srihari.vintix.rendering.CameraProfile
 import com.srihari.vintix.rendering.CameraProfiles
+import com.srihari.vintix.rendering.VintixGLSurfaceView
 
 private const val TAG = "CameraScreen"
 
@@ -40,6 +41,7 @@ fun CameraScreen(
     val captureState by viewModel.captureState.collectAsState()
 
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
+    var glViewRef by remember { mutableStateOf<VintixGLSurfaceView?>(null) }
     val photoCaptureManager = remember { PhotoCaptureManager(context) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -77,7 +79,8 @@ fun CameraScreen(
                 cameraProfile = currentProfile,
                 onCameraReady = { manager ->
                     cameraManager = manager
-                }
+                },
+                onGlViewReady = { glViewRef = it }
             )
 
             // Capture flash overlay
@@ -107,6 +110,8 @@ fun CameraScreen(
                     viewModel.onCaptureStarted()
                     photoCaptureManager.capturePhoto(
                         imageCapture = imageCapture,
+                        cameraProfile = currentProfile,
+                        noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
                         onSuccess = { uri ->
                             Log.d(TAG, "Photo saved: $uri")
                             viewModel.onPhotoCaptured(uri)

@@ -34,12 +34,14 @@ import kotlinx.coroutines.launch
  * @param cameraProfile The active [CameraProfile] to apply to the renderer.
  * @param onCameraReady Callback with the [CameraManager] once camera is started.
  *                      Matches [CameraPreview]'s API for seamless swap in [CameraScreen].
+ * @param onGlViewReady Optional callback with the [VintixGLSurfaceView] (e.g. for noise snapshot on capture).
  */
 @Composable
 fun GLPreview(
     modifier: Modifier = Modifier,
     cameraProfile: CameraProfile = CameraProfile.Default,
-    onCameraReady: (CameraManager) -> Unit = {}
+    onCameraReady: (CameraManager) -> Unit = {},
+    onGlViewReady: (VintixGLSurfaceView) -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -57,6 +59,10 @@ fun GLPreview(
                 }
             }
         }
+    }
+
+    LaunchedEffect(glSurfaceView) {
+        onGlViewReady(glSurfaceView)
     }
 
     // Push profile updates to the GL thread safely

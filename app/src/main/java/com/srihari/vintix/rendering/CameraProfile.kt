@@ -2,7 +2,7 @@ package com.srihari.vintix.rendering
 
 /**
  * Tunable parameters for the realtime retro camera fragment pipeline.
- * Values map 1:1 to GLSL uniforms (see [VintixRenderer.CAMERA_FRAGMENT_SHADER]).
+ * Values map 1:1 to GLSL uniforms (see [RetroPipelineShaders] / preview [VintixRenderer]).
  *
  * Threading: read on the OpenGL thread during [com.srihari.vintix.rendering.VintixRenderer.onDrawFrame];
  * assign new profiles on the same thread or ensure visibility before the next frame.
