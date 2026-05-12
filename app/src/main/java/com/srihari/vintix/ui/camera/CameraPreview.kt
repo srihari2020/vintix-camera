@@ -13,7 +13,8 @@ import com.srihari.vintix.camera.CameraManager
 
 @Composable
 fun CameraPreview(
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onCameraReady: (CameraManager) -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -30,6 +31,7 @@ fun CameraPreview(
             lifecycleOwner = lifecycleOwner,
             surfaceProvider = previewView.surfaceProvider
         )
+        onCameraReady(cameraManager)
     }
 
     AndroidView(
@@ -37,3 +39,4 @@ fun CameraPreview(
         modifier = modifier.fillMaxSize()
     )
 }
+
