@@ -112,6 +112,7 @@ fun CameraScreen(
                         imageCapture = imageCapture,
                         cameraProfile = currentProfile,
                         noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
+                        timestampStyle = com.srihari.vintix.rendering.timestamp.TimestampStyles.ClassicOrange,
                         onSuccess = { uri ->
                             Log.d(TAG, "Photo saved: $uri")
                             viewModel.onPhotoCaptured(uri)

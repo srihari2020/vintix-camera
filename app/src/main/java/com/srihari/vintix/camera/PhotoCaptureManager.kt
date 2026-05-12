@@ -47,6 +47,7 @@ class PhotoCaptureManager(private val context: Context) {
         imageCapture: ImageCapture,
         cameraProfile: CameraProfile,
         noisePhase: Float,
+        timestampStyle: com.srihari.vintix.rendering.timestamp.TimestampStyle?,
         onSuccess: (Uri) -> Unit,
         onError: (Exception) -> Unit,
     ) {
@@ -63,8 +64,16 @@ class PhotoCaptureManager(private val context: Context) {
                             ?: throw IllegalStateException("Bitmap decode failed")
                         val oriented = applyExifRotation(temp.absolutePath, decoded)
                         if (oriented !== decoded) decoded.recycle()
-                        val processed = RetroPhotoGlPipeline.processBitmap(oriented, cameraProfile, noisePhase)
+                        
+                        var processed = RetroPhotoGlPipeline.processBitmap(oriented, cameraProfile, noisePhase)
                         if (oriented !== processed) oriented.recycle()
+                        
+                        if (timestampStyle != null) {
+                            val stamped = com.srihari.vintix.rendering.timestamp.TimestampRenderer.applyTimestamp(processed, timestampStyle)
+                            if (processed !== stamped) processed.recycle()
+                            processed = stamped
+                        }
+                        
                         val uri = insertProcessedJpeg(processed)
                         processed.recycle()
                         temp.delete()
