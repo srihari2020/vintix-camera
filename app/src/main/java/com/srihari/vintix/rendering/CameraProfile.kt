@@ -55,4 +55,32 @@ object CameraProfiles {
         chromaticAberration = 0.5f,
         lensSoftness = 0.55f,
     )
+
+    /**
+     * High contrast, cooler tone, sharp, heavy noise.
+     */
+    val CyberShot2003 = CameraProfile(
+        vignetteIntensity = 0.15f,
+        halationStrength = 1.2f,
+        warmth = 0.7f,
+        desaturation = 0.9f,
+        ccdClarity = 1.5f,
+        sensorNoise = 1.8f,
+        chromaticAberration = 0.8f,
+        lensSoftness = 0.6f,
+    )
+
+    /**
+     * Heavy vignette, strong chromatic aberration, soft lens, warm, high desaturation.
+     */
+    val DisposableFilm = CameraProfile(
+        vignetteIntensity = 0.35f,
+        halationStrength = 0.8f,
+        warmth = 1.4f,
+        desaturation = 0.75f,
+        ccdClarity = 0.4f,
+        sensorNoise = 1.2f,
+        chromaticAberration = 2.5f,
+        lensSoftness = 1.8f,
+    )
 }

@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -25,6 +26,8 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.srihari.vintix.camera.CameraManager
 import com.srihari.vintix.camera.PhotoCaptureManager
+import com.srihari.vintix.rendering.CameraProfile
+import com.srihari.vintix.rendering.CameraProfiles
 
 private const val TAG = "CameraScreen"
 
@@ -45,6 +48,16 @@ fun CameraScreen(
         viewModel.onPermissionResult(isGranted)
     }
 
+    // Available profiles
+    val profiles = mapOf(
+        "Early Digital" to CameraProfiles.EarlyDigitalConsumer,
+        "Daylight" to CameraProfiles.DaylightNeutral,
+        "CyberShot '03" to CameraProfiles.CyberShot2003,
+        "Disposable" to CameraProfiles.DisposableFilm
+    )
+    var selectedProfileName by remember { mutableStateOf(profiles.keys.first()) }
+    val currentProfile = profiles[selectedProfileName] ?: CameraProfile.Default
+
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(
                 context,
@@ -61,6 +74,7 @@ fun CameraScreen(
         if (isCameraPermissionGranted) {
             // Camera preview via OpenGL pipeline — fills entire screen
             GLPreview(
+                cameraProfile = currentProfile,
                 onCameraReady = { manager ->
                     cameraManager = manager
                 }
@@ -72,6 +86,18 @@ fun CameraScreen(
                 onAnimationComplete = {
                     viewModel.resetCaptureState()
                 }
+            )
+
+            // Profile Selector — above shutter button
+            ProfileSelector(
+                profiles = profiles.keys.toList(),
+                selectedProfile = selectedProfileName,
+                onProfileSelected = { selectedProfileName = it },
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 120.dp)
+                    .fillMaxWidth()
             )
 
             // Shutter button — bottom center

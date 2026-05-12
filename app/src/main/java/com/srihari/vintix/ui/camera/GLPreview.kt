@@ -4,6 +4,7 @@ import android.view.Surface
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
@@ -13,6 +14,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.srihari.vintix.camera.CameraManager
+import com.srihari.vintix.rendering.CameraProfile
 import com.srihari.vintix.rendering.VintixGLSurfaceView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -29,12 +31,14 @@ import kotlinx.coroutines.launch
  * 3. Starts CameraX with the Surface (on the main thread)
  * 4. Camera frames flow: CameraX → SurfaceTexture → OES texture → shader → screen
  *
+ * @param cameraProfile The active [CameraProfile] to apply to the renderer.
  * @param onCameraReady Callback with the [CameraManager] once camera is started.
  *                      Matches [CameraPreview]'s API for seamless swap in [CameraScreen].
  */
 @Composable
 fun GLPreview(
     modifier: Modifier = Modifier,
+    cameraProfile: CameraProfile = CameraProfile.Default,
     onCameraReady: (CameraManager) -> Unit = {}
 ) {
     val context = LocalContext.current
@@ -52,6 +56,13 @@ fun GLPreview(
                     onCameraReady(cameraManager)
                 }
             }
+        }
+    }
+
+    // Push profile updates to the GL thread safely
+    LaunchedEffect(cameraProfile) {
+        glSurfaceView.queueEvent {
+            glSurfaceView.vintixRenderer.cameraProfile = cameraProfile
         }
     }
 
