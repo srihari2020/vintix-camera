@@ -1,6 +1,22 @@
 package com.srihari.vintix.rendering
 
 /**
+ * Defines the simulated hardware flash characteristics applied during photo export.
+ */
+data class FlashBehavior(
+    /** Center-weighted exposure multiplier to simulate direct flash. */
+    val centerExposureBoost: Float = 0f,
+    /** Intensity of warm highlight bloom caused by flash. */
+    val warmBloom: Float = 0f,
+    /** How harshly highlights clip (e.g. 0.0 = no extra clip, 1.0 = harsh digital clip). */
+    val highlightClipping: Float = 0f,
+    /** Flattens contrast in the center to simulate direct light washing out shadows. */
+    val contrastFlattening: Float = 0f,
+    /** Extra halation multiplier applied only during flash capture. */
+    val extraHalation: Float = 1f
+)
+
+/**
  * Tunable parameters for the realtime retro camera fragment pipeline.
  * Values map 1:1 to GLSL uniforms (see [RetroPipelineShaders] / preview [VintixRenderer]).
  *
@@ -28,11 +44,22 @@ data class CameraProfile(
     /** Scales lens edge softness mix and sample shift (baseline `1.0`). */
     val lensSoftness: Float = 1f,
     /** Quality setting for JPEG compression upon export (0-100). */
-    val jpegQuality: Int = 92
+    val jpegQuality: Int = 92,
+    /** Flash characteristics applied during photo export. */
+    val flashBehavior: FlashBehavior = FlashBehavior()
 ) {
     companion object {
         /** Default tuning preserved from the original hardcoded shader. */
-        val Default = CameraProfile(jpegQuality = 88)
+        val Default = CameraProfile(
+            jpegQuality = 88,
+            flashBehavior = FlashBehavior(
+                centerExposureBoost = 0.25f,
+                warmBloom = 0.3f,
+                highlightClipping = 0.6f,
+                contrastFlattening = 0.15f,
+                extraHalation = 1.2f
+            )
+        )
     }
 }
 
@@ -56,7 +83,14 @@ object CameraProfiles {
         sensorNoise = 0.45f,
         chromaticAberration = 0.5f,
         lensSoftness = 0.55f,
-        jpegQuality = 95
+        jpegQuality = 95,
+        flashBehavior = FlashBehavior(
+            centerExposureBoost = 0.15f,
+            warmBloom = 0.1f,
+            highlightClipping = 0.3f,
+            contrastFlattening = 0.05f,
+            extraHalation = 1.1f
+        )
     )
 
     /**
@@ -71,7 +105,14 @@ object CameraProfiles {
         sensorNoise = 1.8f,
         chromaticAberration = 0.8f,
         lensSoftness = 0.6f,
-        jpegQuality = 82
+        jpegQuality = 82,
+        flashBehavior = FlashBehavior(
+            centerExposureBoost = 0.4f,
+            warmBloom = 0.1f,
+            highlightClipping = 0.9f,
+            contrastFlattening = 0.3f,
+            extraHalation = 1.8f
+        )
     )
 
     /**
@@ -86,6 +127,13 @@ object CameraProfiles {
         sensorNoise = 1.2f,
         chromaticAberration = 2.5f,
         lensSoftness = 1.8f,
-        jpegQuality = 70
+        jpegQuality = 70,
+        flashBehavior = FlashBehavior(
+            centerExposureBoost = 0.5f,
+            warmBloom = 0.8f,
+            highlightClipping = 0.4f,
+            contrastFlattening = 0.1f,
+            extraHalation = 1.5f
+        )
     )
 }

@@ -166,9 +166,33 @@ precision mediump float;
                 return o;
             }
 
+            uniform float uFlashCenterBoost;
+            uniform float uFlashWarmBloom;
+            uniform float uFlashHighlightClipping;
+            uniform float uFlashContrastFlattening;
+
             vec4 vnx_retro_color_pipeline(VKX_SAMPLER tex, vec2 uv) {
                 vec4 lc = vnx_lens_edge_capture(tex, uv);
                 vec3 c = lc.rgb;
+                
+                // FLASH PASS 1: Center exposure boost & contrast flattening
+                if (uFlashCenterBoost > 0.0) {
+                    float r; vec2 dir;
+                    vnx_uv_radial(uv, r, dir);
+                    float flashFalloff = 1.0 - smoothstep(0.0, 1.2, r);
+                    
+                    c += c * flashFalloff * uFlashCenterBoost;
+                    
+                    float y = vnx_luma709(c);
+                    c = mix(c, vec3(y + 0.1), flashFalloff * uFlashContrastFlattening);
+                    
+                    vec3 bloomTint = vec3(1.08, 1.0, 0.92);
+                    c += c * bloomTint * (y * y) * flashFalloff * uFlashWarmBloom;
+                    
+                    float clipThresh = 1.0 - (uFlashHighlightClipping * 0.3);
+                    c = min(c, vec3(clipThresh)) / clipThresh;
+                }
+                
                 c = vnx_retro_highlight_rolloff(c);
                 c = vnx_lift_blacks(c);
                 c = vnx_warm_highlight_rolloff(c);

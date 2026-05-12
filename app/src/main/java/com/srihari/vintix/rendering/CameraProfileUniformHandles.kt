@@ -17,16 +17,33 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
     private val uSensorNoise = program.getUniformLocation("uSensorNoise")
     private val uChromaticAberration = program.getUniformLocation("uChromaticAberration")
     private val uLensSoftness = program.getUniformLocation("uLensSoftness")
+    private val uFlashCenterBoost = program.getUniformLocation("uFlashCenterBoost")
+    private val uFlashWarmBloom = program.getUniformLocation("uFlashWarmBloom")
+    private val uFlashHighlightClipping = program.getUniformLocation("uFlashHighlightClipping")
+    private val uFlashContrastFlattening = program.getUniformLocation("uFlashContrastFlattening")
 
-    fun upload(profile: CameraProfile, noisePhase: Float) {
+    fun upload(profile: CameraProfile, noisePhase: Float, isExport: Boolean) {
         if (uNoisePhase >= 0) GLES20.glUniform1f(uNoisePhase, noisePhase)
         if (uVignetteIntensity >= 0) GLES20.glUniform1f(uVignetteIntensity, profile.vignetteIntensity)
-        if (uHalationStrength >= 0) GLES20.glUniform1f(uHalationStrength, profile.halationStrength)
         if (uWarmth >= 0) GLES20.glUniform1f(uWarmth, profile.warmth)
         if (uDesaturation >= 0) GLES20.glUniform1f(uDesaturation, profile.desaturation)
         if (uCcdClarity >= 0) GLES20.glUniform1f(uCcdClarity, profile.ccdClarity)
         if (uSensorNoise >= 0) GLES20.glUniform1f(uSensorNoise, profile.sensorNoise)
         if (uChromaticAberration >= 0) GLES20.glUniform1f(uChromaticAberration, profile.chromaticAberration)
         if (uLensSoftness >= 0) GLES20.glUniform1f(uLensSoftness, profile.lensSoftness)
+
+        if (isExport) {
+            if (uHalationStrength >= 0) GLES20.glUniform1f(uHalationStrength, profile.halationStrength * profile.flashBehavior.extraHalation)
+            if (uFlashCenterBoost >= 0) GLES20.glUniform1f(uFlashCenterBoost, profile.flashBehavior.centerExposureBoost)
+            if (uFlashWarmBloom >= 0) GLES20.glUniform1f(uFlashWarmBloom, profile.flashBehavior.warmBloom)
+            if (uFlashHighlightClipping >= 0) GLES20.glUniform1f(uFlashHighlightClipping, profile.flashBehavior.highlightClipping)
+            if (uFlashContrastFlattening >= 0) GLES20.glUniform1f(uFlashContrastFlattening, profile.flashBehavior.contrastFlattening)
+        } else {
+            if (uHalationStrength >= 0) GLES20.glUniform1f(uHalationStrength, profile.halationStrength)
+            if (uFlashCenterBoost >= 0) GLES20.glUniform1f(uFlashCenterBoost, 0f)
+            if (uFlashWarmBloom >= 0) GLES20.glUniform1f(uFlashWarmBloom, 0f)
+            if (uFlashHighlightClipping >= 0) GLES20.glUniform1f(uFlashHighlightClipping, 0f)
+            if (uFlashContrastFlattening >= 0) GLES20.glUniform1f(uFlashContrastFlattening, 0f)
+        }
     }
 }
