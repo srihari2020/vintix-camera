@@ -27,10 +27,12 @@ data class CameraProfile(
     val chromaticAberration: Float = 1f,
     /** Scales lens edge softness mix and sample shift (baseline `1.0`). */
     val lensSoftness: Float = 1f,
+    /** Quality setting for JPEG compression upon export (0-100). */
+    val jpegQuality: Int = 92
 ) {
     companion object {
         /** Default tuning preserved from the original hardcoded shader. */
-        val Default = CameraProfile()
+        val Default = CameraProfile(jpegQuality = 88)
     }
 }
 
@@ -54,6 +56,7 @@ object CameraProfiles {
         sensorNoise = 0.45f,
         chromaticAberration = 0.5f,
         lensSoftness = 0.55f,
+        jpegQuality = 95
     )
 
     /**
@@ -68,6 +71,7 @@ object CameraProfiles {
         sensorNoise = 1.8f,
         chromaticAberration = 0.8f,
         lensSoftness = 0.6f,
+        jpegQuality = 82
     )
 
     /**
@@ -82,5 +86,6 @@ object CameraProfiles {
         sensorNoise = 1.2f,
         chromaticAberration = 2.5f,
         lensSoftness = 1.8f,
+        jpegQuality = 70
     )
 }

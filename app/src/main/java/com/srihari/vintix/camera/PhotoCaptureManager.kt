@@ -33,7 +33,6 @@ class PhotoCaptureManager(private val context: Context) {
         private const val FILENAME_FORMAT = "yyyyMMdd_HHmmss"
         private const val MIME_TYPE = "image/jpeg"
         private const val RELATIVE_PATH = "Pictures/Vintix"
-        private const val JPEG_QUALITY = 92
     }
 
     /**
@@ -74,7 +73,7 @@ class PhotoCaptureManager(private val context: Context) {
                             processed = stamped
                         }
                         
-                        val uri = insertProcessedJpeg(processed)
+                        val uri = insertProcessedJpeg(processed, cameraProfile.jpegQuality)
                         processed.recycle()
                         temp.delete()
                         ContextCompat.getMainExecutor(context).execute { onSuccess(uri) }
@@ -103,7 +102,7 @@ class PhotoCaptureManager(private val context: Context) {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    private fun insertProcessedJpeg(bitmap: Bitmap): Uri {
+    private fun insertProcessedJpeg(bitmap: Bitmap, quality: Int): Uri {
         val timestamp = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(Date())
         val fileName = "$FILENAME_PREFIX$timestamp"
 
@@ -119,7 +118,7 @@ class PhotoCaptureManager(private val context: Context) {
             ?: throw IllegalStateException("MediaStore insert failed")
 
         resolver.openOutputStream(uri)?.use { out ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, JPEG_QUALITY, out)) {
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
                 throw IllegalStateException("JPEG compress failed")
             }
         } ?: throw IllegalStateException("Could not open output stream for $uri")
