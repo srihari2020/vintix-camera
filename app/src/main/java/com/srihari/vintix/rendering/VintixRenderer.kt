@@ -47,14 +47,129 @@ class VintixRenderer : GLSurfaceView.Renderer {
          * Uses samplerExternalOES for GL_TEXTURE_EXTERNAL_OES textures.
          * This is the insertion point for future retro effects:
          * CRT scanlines, film grain, color grading, vignette, etc.
+         *
+         * Pipeline (stack order is intentional for future passes / uniforms):
+         * lens (CA + edge softness) → color grade → pseudo-halation → radial vignette.
          */
         const val CAMERA_FRAGMENT_SHADER = """
             #extension GL_OES_EGL_image_external : require
             precision mediump float;
             varying vec2 vTexCoord;
             uniform samplerExternalOES uTexture;
+
+            float vnx_luma709(vec3 c) {
+                return dot(c, vec3(0.2126, 0.7152, 0.0722));
+            }
+
+            void vnx_uv_radial(vec2 uv, out float r, out vec2 dirN) {
+                vec2 d = uv - vec2(0.5);
+                float len = length(d);
+                r = len * 2.0;
+                dirN = (len > 1e-4) ? (d / len) : vec2(0.0);
+            }
+
+            vec4 vnx_lens_edge_capture(samplerExternalOES tex, vec2 uv) {
+                float r;
+                vec2 dir;
+                vnx_uv_radial(uv, r, dir);
+                float edge = smoothstep(0.24, 0.92, r);
+                float ca = 0.00072 * edge;
+                vec2 uvR = uv + dir * ca;
+                vec2 uvB = uv - dir * ca * 0.9;
+                vec4 ctr = texture2D(tex, uv);
+                float rChan = texture2D(tex, uvR).r;
+                float bChan = texture2D(tex, uvB).b;
+                vec3 sharp = vec3(rChan, ctr.g, bChan);
+                float softW = smoothstep(0.36, 0.94, r);
+                vec2 softUv = uv - dir * 0.00155 * softW;
+                vec3 softRgb = texture2D(tex, softUv).rgb;
+                vec3 rgb = mix(sharp, softRgb, softW * 0.38);
+                return vec4(rgb, ctr.a);
+            }
+
+            vec3 vnx_radial_vignette(vec3 c, vec2 uv) {
+                float r;
+                vec2 dir;
+                vnx_uv_radial(uv, r, dir);
+                float vig = 1.0 - 0.11 * smoothstep(0.18, 0.95, r);
+                return c * vig;
+            }
+
+            vec3 vnx_retro_highlight_rolloff(vec3 c) {
+                float y = vnx_luma709(c);
+                float yc = y / (1.0 + 0.26 * y);
+                float s = (y > 1e-4) ? (yc / y) : 1.0;
+                return c * s;
+            }
+
+            vec3 vnx_lift_blacks(vec3 c) {
+                float y = vnx_luma709(c);
+                float w = 1.0 - smoothstep(0.0, 0.4, y);
+                return c + 0.013 * w;
+            }
+
+            vec3 vnx_warm_highlight_rolloff(vec3 c) {
+                float y = vnx_luma709(c);
+                float t = smoothstep(0.34, 0.86, y);
+                vec3 warm = vec3(1.016, 1.003, 0.994);
+                return mix(c, c * warm, t * 0.18);
+            }
+
+            vec3 vnx_vintage_color_shift(vec3 c) {
+                mat3 m = mat3(
+                    1.015, 0.008, 0.0,
+                    0.0,   0.997, 0.004,
+                    0.0,   0.006, 0.982
+                );
+                return m * c;
+            }
+
+            vec3 vnx_mild_desaturate(vec3 c, float sat) {
+                float y = vnx_luma709(c);
+                return mix(vec3(y), c, sat);
+            }
+
+            vec3 vnx_halation_warm_tint(vec3 c) {
+                return c * vec3(1.042, 1.005, 0.931);
+            }
+
+            vec3 vnx_halation_neighbor_contrib(samplerExternalOES tex, vec2 uv, vec2 off) {
+                vec3 n = texture2D(tex, uv + off).rgb;
+                float y = vnx_luma709(n);
+                float w = smoothstep(0.5, 0.5 + 0.26, y);
+                w *= w;
+                return vnx_halation_warm_tint(n) * w;
+            }
+
+            vec3 vnx_pseudo_halation(samplerExternalOES tex, vec2 uv) {
+                vec2 du = vec2(0.00158, 0.0);
+                vec2 dv = vec2(0.0, 0.00192);
+                vec3 acc = vnx_halation_neighbor_contrib(tex, uv, du);
+                acc += vnx_halation_neighbor_contrib(tex, uv, -du);
+                acc += vnx_halation_neighbor_contrib(tex, uv, dv);
+                acc += vnx_halation_neighbor_contrib(tex, uv, -dv);
+                return acc * (0.064 / 4.0);
+            }
+
+            vec4 vnx_retro_color_pipeline(samplerExternalOES tex, vec2 uv) {
+                vec4 lc = vnx_lens_edge_capture(tex, uv);
+                vec3 c = lc.rgb;
+                c = vnx_retro_highlight_rolloff(c);
+                c = vnx_lift_blacks(c);
+                c = vnx_warm_highlight_rolloff(c);
+                c = vnx_vintage_color_shift(c);
+                c = vnx_mild_desaturate(c, 0.935);
+                c = clamp(c, 0.0, 1.0);
+                vec3 halo = vnx_pseudo_halation(tex, uv);
+                float yb = vnx_luma709(c);
+                float damp = 1.0 - 0.38 * smoothstep(0.62, 0.96, yb);
+                c = clamp(c + halo * damp, 0.0, 1.0);
+                c = vnx_radial_vignette(c, uv);
+                return vec4(clamp(c, 0.0, 1.0), lc.a);
+            }
+
             void main() {
-                gl_FragColor = texture2D(uTexture, vTexCoord);
+                gl_FragColor = vnx_retro_color_pipeline(uTexture, vTexCoord);
             }
         """
     }
