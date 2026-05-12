@@ -16,10 +16,12 @@ import javax.microedition.khronos.opengles.GL10
  * - **Camera mode**: Renders live CameraX frames via [SurfaceTexture] + OES external texture
  * - **Fallback mode**: Renders a checkerboard texture (when no camera is connected)
  *
- * Architecture prepared for:
- * - Multi-pass GLSL retro effects (swap the fragment shader)
- * - Framebuffer objects for off-screen rendering
- * - Filter chaining via multiple [ShaderProgram] instances
+ * Architecture:
+ * - [CameraProfile] drives fragment uniforms (vignette, halation, warmth, etc.).
+ * - [CameraProfiles] holds named presets; assign [cameraProfile] on the GL thread when possible.
+ * - Multi-pass GLSL retro effects (future): swap fragment shader or chain programs.
+ * - Framebuffer objects for off-screen rendering.
+ * - Filter chaining via multiple [ShaderProgram] instances.
  */
 class VintixRenderer : GLSurfaceView.Renderer {
 
@@ -51,6 +53,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
          * Pipeline (stack order is intentional for future passes / uniforms):
          * lens (CA + edge softness) → color grade → pseudo-halation → CCD clarity → micro-contrast
          * → CCD sensor noise (uNoisePhase) → radial vignette.
+         *
+         * Tuning: [CameraProfile] → fragment uniforms (uVignetteIntensity, uHalationStrength, …).
          */
         const val CAMERA_FRAGMENT_SHADER = """
             #extension GL_OES_EGL_image_external : require
@@ -58,6 +62,14 @@ class VintixRenderer : GLSurfaceView.Renderer {
             varying vec2 vTexCoord;
             uniform samplerExternalOES uTexture;
             uniform float uNoisePhase;
+            uniform float uVignetteIntensity;
+            uniform float uHalationStrength;
+            uniform float uWarmth;
+            uniform float uDesaturation;
+            uniform float uCcdClarity;
+            uniform float uSensorNoise;
+            uniform float uChromaticAberration;
+            uniform float uLensSoftness;
 
             float vnx_luma709(vec3 c) {
                 return dot(c, vec3(0.2126, 0.7152, 0.0722));
@@ -75,7 +87,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 vec2 dir;
                 vnx_uv_radial(uv, r, dir);
                 float edge = smoothstep(0.24, 0.92, r);
-                float ca = 0.00072 * edge;
+                float ca = 0.00072 * edge * uChromaticAberration;
                 vec2 uvR = uv + dir * ca;
                 vec2 uvB = uv - dir * ca * 0.9;
                 vec4 ctr = texture2D(tex, uv);
@@ -83,9 +95,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 float bChan = texture2D(tex, uvB).b;
                 vec3 sharp = vec3(rChan, ctr.g, bChan);
                 float softW = smoothstep(0.36, 0.94, r);
-                vec2 softUv = uv - dir * 0.00155 * softW;
+                vec2 softUv = uv - dir * 0.00155 * softW * uLensSoftness;
                 vec3 softRgb = texture2D(tex, softUv).rgb;
-                vec3 rgb = mix(sharp, softRgb, softW * 0.38);
+                vec3 rgb = mix(sharp, softRgb, softW * 0.38 * uLensSoftness);
                 return vec4(rgb, ctr.a);
             }
 
@@ -93,7 +105,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 float r;
                 vec2 dir;
                 vnx_uv_radial(uv, r, dir);
-                float vig = 1.0 - 0.11 * smoothstep(0.18, 0.95, r);
+                float vig = 1.0 - uVignetteIntensity * smoothstep(0.18, 0.95, r);
                 return c * vig;
             }
 
@@ -114,7 +126,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 float y = vnx_luma709(c);
                 float t = smoothstep(0.34, 0.86, y);
                 vec3 warm = vec3(1.016, 1.003, 0.994);
-                return mix(c, c * warm, t * 0.18);
+                return mix(c, c * warm, t * 0.18 * clamp(uWarmth, 0.0, 2.0));
             }
 
             vec3 vnx_vintage_color_shift(vec3 c) {
@@ -132,7 +144,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
             }
 
             vec3 vnx_halation_warm_tint(vec3 c) {
-                return c * vec3(1.042, 1.005, 0.931);
+                vec3 tw = vec3(1.042, 1.005, 0.931);
+                return c * mix(vec3(1.0), tw, clamp(uWarmth, 0.0, 1.5));
             }
 
             vec3 vnx_halation_neighbor_contrib(samplerExternalOES tex, vec2 uv, vec2 off) {
@@ -150,7 +163,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 acc += vnx_halation_neighbor_contrib(tex, uv, -du);
                 acc += vnx_halation_neighbor_contrib(tex, uv, dv);
                 acc += vnx_halation_neighbor_contrib(tex, uv, -dv);
-                return acc * (0.064 / 4.0);
+                return acc * (0.064 / 4.0) * uHalationStrength;
             }
 
             vec3 vnx_ccd_sensor_clarity(samplerExternalOES tex, vec2 uv, vec3 graded) {
@@ -163,7 +176,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 float d = vnx_luma709(rawC - avg);
                 d = clamp(d, -0.042, 0.042);
                 float edge = smoothstep(0.006, 0.11, abs(d));
-                float gain = 0.31 * (0.58 + 0.42 * edge);
+                float gain = 0.31 * (0.58 + 0.42 * edge) * uCcdClarity;
                 float yg = max(vnx_luma709(graded), 0.02);
                 vec3 ratio = graded / yg;
                 return graded + gain * d * ratio;
@@ -193,8 +206,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 float hiClean = smoothstep(0.52, 0.87, y);
                 float w = (1.0 - hiClean);
                 w *= mix(1.15, 0.94, smoothstep(0.0, 0.48, y));
-                float ampL = 0.0102;
-                float ampC = 0.0049;
+                float ampL = 0.0102 * uSensorNoise;
+                float ampC = 0.0049 * uSensorNoise;
                 vec3 o = c;
                 o += nL * ampL * w;
                 o.r += nR * ampC * w;
@@ -210,7 +223,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
                 c = vnx_lift_blacks(c);
                 c = vnx_warm_highlight_rolloff(c);
                 c = vnx_vintage_color_shift(c);
-                c = vnx_mild_desaturate(c, 0.935);
+                c = vnx_mild_desaturate(c, clamp(uDesaturation, 0.0, 1.0));
                 c = clamp(c, 0.0, 1.0);
                 vec3 halo = vnx_pseudo_halation(tex, uv);
                 float yb = vnx_luma709(c);
@@ -235,7 +248,21 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private var textureUniformLocation: Int = 0
     private var texMatrixUniformLocation: Int = 0
     private var noisePhaseUniformLocation: Int = -1
+    private var uVignetteIntensityLoc: Int = -1
+    private var uHalationStrengthLoc: Int = -1
+    private var uWarmthLoc: Int = -1
+    private var uDesaturationLoc: Int = -1
+    private var uCcdClarityLoc: Int = -1
+    private var uSensorNoiseLoc: Int = -1
+    private var uChromaticAberrationLoc: Int = -1
+    private var uLensSoftnessLoc: Int = -1
     private var noisePhase: Float = 0f
+
+    /**
+     * Active camera look; uploaded as fragment uniforms each frame.
+     * Prefer assigning on the GL thread before or during [onDrawFrame].
+     */
+    var cameraProfile: CameraProfile = CameraProfile.Default
 
     /** The SurfaceTexture that receives camera frames. Created on the GL thread. */
     private var surfaceTexture: SurfaceTexture? = null
@@ -276,6 +303,14 @@ class VintixRenderer : GLSurfaceView.Renderer {
         textureUniformLocation = shaderProgram.getUniformLocation("uTexture")
         texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
         noisePhaseUniformLocation = shaderProgram.getUniformLocation("uNoisePhase")
+        uVignetteIntensityLoc = shaderProgram.getUniformLocation("uVignetteIntensity")
+        uHalationStrengthLoc = shaderProgram.getUniformLocation("uHalationStrength")
+        uWarmthLoc = shaderProgram.getUniformLocation("uWarmth")
+        uDesaturationLoc = shaderProgram.getUniformLocation("uDesaturation")
+        uCcdClarityLoc = shaderProgram.getUniformLocation("uCcdClarity")
+        uSensorNoiseLoc = shaderProgram.getUniformLocation("uSensorNoise")
+        uChromaticAberrationLoc = shaderProgram.getUniformLocation("uChromaticAberration")
+        uLensSoftnessLoc = shaderProgram.getUniformLocation("uLensSoftness")
 
         // Initialize geometry
         quad = TexturedQuad()
@@ -322,6 +357,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
             GLES20.glUniform1f(noisePhaseUniformLocation, noisePhase)
         }
 
+        uploadCameraProfileUniforms(cameraProfile)
+
         // Bind OES texture to unit 0
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
@@ -351,6 +388,17 @@ class VintixRenderer : GLSurfaceView.Renderer {
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
 
         return texId
+    }
+
+    private fun uploadCameraProfileUniforms(profile: CameraProfile) {
+        if (uVignetteIntensityLoc >= 0) GLES20.glUniform1f(uVignetteIntensityLoc, profile.vignetteIntensity)
+        if (uHalationStrengthLoc >= 0) GLES20.glUniform1f(uHalationStrengthLoc, profile.halationStrength)
+        if (uWarmthLoc >= 0) GLES20.glUniform1f(uWarmthLoc, profile.warmth)
+        if (uDesaturationLoc >= 0) GLES20.glUniform1f(uDesaturationLoc, profile.desaturation)
+        if (uCcdClarityLoc >= 0) GLES20.glUniform1f(uCcdClarityLoc, profile.ccdClarity)
+        if (uSensorNoiseLoc >= 0) GLES20.glUniform1f(uSensorNoiseLoc, profile.sensorNoise)
+        if (uChromaticAberrationLoc >= 0) GLES20.glUniform1f(uChromaticAberrationLoc, profile.chromaticAberration)
+        if (uLensSoftnessLoc >= 0) GLES20.glUniform1f(uLensSoftnessLoc, profile.lensSoftness)
     }
 
     /**
