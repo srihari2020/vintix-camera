@@ -138,13 +138,21 @@ class VintixRenderer : GLSurfaceView.Renderer {
         surfaceTexture?.setDefaultBufferSize(width, height)
     }
 
+    /**
+     * Set to true to temporarily stop fetching new camera frames, freezing the viewfinder.
+     */
+    @Volatile
+    var freezePreview: Boolean = false
+
     override fun onDrawFrame(gl: GL10?) {
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         // Pull the latest camera frame into the OES texture
         surfaceTexture?.let { st ->
-            st.updateTexImage()
-            st.getTransformMatrix(texTransformMatrix)
+            if (!freezePreview) {
+                st.updateTexImage()
+                st.getTransformMatrix(texTransformMatrix)
+            }
         }
 
         // Bind shader program

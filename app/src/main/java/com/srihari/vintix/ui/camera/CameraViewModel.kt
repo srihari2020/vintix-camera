@@ -9,7 +9,7 @@ import kotlinx.coroutines.flow.asStateFlow
 /** Represents the current state of photo capture. */
 sealed interface CaptureState {
     data object Idle : CaptureState
-    data object Capturing : CaptureState
+    data class Capturing(val feedback: com.srihari.vintix.rendering.FeedbackBehavior) : CaptureState
     data class Success(val uri: Uri) : CaptureState
     data class Error(val message: String) : CaptureState
 }
@@ -26,8 +26,8 @@ class CameraViewModel : ViewModel() {
         _isCameraPermissionGranted.value = isGranted
     }
 
-    fun onCaptureStarted() {
-        _captureState.value = CaptureState.Capturing
+    fun onCaptureStarted(feedback: com.srihari.vintix.rendering.FeedbackBehavior) {
+        _captureState.value = CaptureState.Capturing(feedback)
     }
 
     fun onPhotoCaptured(uri: Uri) {

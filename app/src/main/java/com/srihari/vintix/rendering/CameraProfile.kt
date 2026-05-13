@@ -26,8 +26,6 @@ data class LightLeakBehavior(
     val maxIntensity: Float = 0f
 )
 
-
-
 /**
  * Defines per-capture random variance applied to camera properties for organic inconsistency.
  */
@@ -49,6 +47,20 @@ data class InstabilityBehavior(
         return base + (Math.random().toFloat() * 2f - 1f) * variance
     }
 }
+
+/**
+ * Defines audiovisual and tactile feedback during photo capture.
+ */
+data class FeedbackBehavior(
+    /** If true, plays a digital beep. If false, plays a mechanical shutter click. */
+    val useDigitalBeep: Boolean = false,
+    /** If true, triggers a physical haptic bump on capture. */
+    val hapticFeedback: Boolean = true,
+    /** How long to freeze the live viewfinder (simulates mechanical mirror blackout or digital CCD freeze). */
+    val captureFreezeMs: Long = 100L,
+    /** Duration of the white UI flash overlay (0 = no flash). */
+    val flashFadeDurationMs: Int = 0
+)
 
 /**
  * Tunable parameters for the realtime retro camera fragment pipeline.
@@ -86,7 +98,9 @@ data class CameraProfile(
     /** Probabilistic light leak behavior applied during photo export. */
     val lightLeakBehavior: LightLeakBehavior = LightLeakBehavior(),
     /** Instability/randomness configuration applied per-capture. */
-    val instabilityBehavior: InstabilityBehavior = InstabilityBehavior()
+    val instabilityBehavior: InstabilityBehavior = InstabilityBehavior(),
+    /** Audiovisual and tactile feedback during capture. */
+    val feedbackBehavior: FeedbackBehavior = FeedbackBehavior()
 ) {
     /** Generates a new profile with jittered parameters for a single capture. */
     fun applyInstability(): CameraProfile {
@@ -116,6 +130,12 @@ data class CameraProfile(
                 exposureVariance = 0.03f,
                 warmthVariance = 0.05f,
                 noiseVariance = 0.1f
+            ),
+            feedbackBehavior = FeedbackBehavior(
+                useDigitalBeep = true,
+                hapticFeedback = true,
+                captureFreezeMs = 150L,
+                flashFadeDurationMs = 0
             )
         )
     }
@@ -148,6 +168,12 @@ object CameraProfiles {
             highlightClipping = 0.3f,
             contrastFlattening = 0.05f,
             extraHalation = 1.1f
+        ),
+        feedbackBehavior = FeedbackBehavior(
+            useDigitalBeep = false,
+            hapticFeedback = false,
+            captureFreezeMs = 50L,
+            flashFadeDurationMs = 0
         )
     )
 
@@ -175,6 +201,12 @@ object CameraProfiles {
             exposureVariance = 0.08f,
             warmthVariance = 0.1f,
             noiseVariance = 0.3f
+        ),
+        feedbackBehavior = FeedbackBehavior(
+            useDigitalBeep = true,
+            hapticFeedback = false,
+            captureFreezeMs = 300L,
+            flashFadeDurationMs = 200
         )
     )
 
@@ -208,6 +240,12 @@ object CameraProfiles {
             vignetteVariance = 0.1f,
             halationVariance = 0.3f,
             noiseVariance = 0.2f
+        ),
+        feedbackBehavior = FeedbackBehavior(
+            useDigitalBeep = false,
+            hapticFeedback = true,
+            captureFreezeMs = 50L,
+            flashFadeDurationMs = 800
         )
     )
 }

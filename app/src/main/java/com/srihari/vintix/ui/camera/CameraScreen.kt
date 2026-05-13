@@ -5,6 +5,7 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -84,10 +85,12 @@ fun CameraScreen(
             )
 
             // Capture flash overlay
+            val capturingState = captureState as? CaptureState.Capturing
             CaptureFlashOverlay(
-                trigger = captureState is CaptureState.Success,
+                trigger = capturingState != null,
+                durationMs = capturingState?.feedback?.flashFadeDurationMs ?: 0,
                 onAnimationComplete = {
-                    viewModel.resetCaptureState()
+                    // Animation complete, state resets when CaptureState.Success is emitted
                 }
             )
 
@@ -103,11 +106,34 @@ fun CameraScreen(
                     .fillMaxWidth()
             )
 
+            val view = androidx.compose.ui.platform.LocalView.current
+            val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
             // Shutter button — bottom center
             ShutterButton(
                 onClick = {
                     val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
-                    viewModel.onCaptureStarted()
+                    val feedback = currentProfile.feedbackBehavior
+                    
+                    if (feedback.hapticFeedback) {
+                        view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                    }
+                    if (feedback.useDigitalBeep) {
+                        android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 100)
+                            .startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 50)
+                    } else {
+                        android.media.MediaActionSound().play(android.media.MediaActionSound.SHUTTER_CLICK)
+                    }
+                    
+                    if (feedback.captureFreezeMs > 0) {
+                        glViewRef?.vintixRenderer?.freezePreview = true
+                        glViewRef?.postDelayed({
+                            glViewRef?.vintixRenderer?.freezePreview = false
+                        }, feedback.captureFreezeMs)
+                    }
+                    
+                    viewModel.onCaptureStarted(feedback)
+                    
                     photoCaptureManager.capturePhoto(
                         imageCapture = imageCapture,
                         cameraProfile = currentProfile,
@@ -116,12 +142,18 @@ fun CameraScreen(
                         onSuccess = { uri ->
                             Log.d(TAG, "Photo saved: $uri")
                             viewModel.onPhotoCaptured(uri)
+                            // Reset state so flash can trigger again next time
+                            coroutineScope.launch {
+                                kotlinx.coroutines.delay(100)
+                                viewModel.resetCaptureState()
+                            }
                         },
                         onError = { exception ->
                             Log.e(TAG, "Capture failed", exception)
                             viewModel.onCaptureError(
                                 exception.message ?: "Unknown capture error"
                             )
+                            viewModel.resetCaptureState()
                         }
                     )
                 },

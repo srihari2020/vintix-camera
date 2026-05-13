@@ -18,6 +18,7 @@ import androidx.compose.ui.graphics.Color
 @Composable
 fun CaptureFlashOverlay(
     trigger: Boolean,
+    durationMs: Int,
     onAnimationComplete: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -25,11 +26,13 @@ fun CaptureFlashOverlay(
 
     LaunchedEffect(trigger) {
         if (trigger) {
-            alpha.snapTo(0.6f)
-            alpha.animateTo(
-                targetValue = 0f,
-                animationSpec = tween(durationMillis = 200)
-            )
+            if (durationMs > 0) {
+                alpha.snapTo(0.6f)
+                alpha.animateTo(
+                    targetValue = 0f,
+                    animationSpec = tween(durationMillis = durationMs)
+                )
+            }
             onAnimationComplete()
         }
     }
