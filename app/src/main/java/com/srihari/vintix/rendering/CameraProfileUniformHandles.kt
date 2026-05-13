@@ -21,8 +21,17 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
     private val uFlashWarmBloom = program.getUniformLocation("uFlashWarmBloom")
     private val uFlashHighlightClipping = program.getUniformLocation("uFlashHighlightClipping")
     private val uFlashContrastFlattening = program.getUniformLocation("uFlashContrastFlattening")
+    private val uLeakIntensity = program.getUniformLocation("uLeakIntensity")
+    private val uLeakOrigin = program.getUniformLocation("uLeakOrigin")
 
-    fun upload(profile: CameraProfile, noisePhase: Float, isExport: Boolean) {
+    fun upload(
+        profile: CameraProfile, 
+        noisePhase: Float, 
+        isExport: Boolean,
+        leakIntensity: Float = 0f,
+        leakOriginX: Float = 0f,
+        leakOriginY: Float = 0f
+    ) {
         if (uNoisePhase >= 0) GLES20.glUniform1f(uNoisePhase, noisePhase)
         if (uVignetteIntensity >= 0) GLES20.glUniform1f(uVignetteIntensity, profile.vignetteIntensity)
         if (uWarmth >= 0) GLES20.glUniform1f(uWarmth, profile.warmth)
@@ -38,12 +47,15 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
             if (uFlashWarmBloom >= 0) GLES20.glUniform1f(uFlashWarmBloom, profile.flashBehavior.warmBloom)
             if (uFlashHighlightClipping >= 0) GLES20.glUniform1f(uFlashHighlightClipping, profile.flashBehavior.highlightClipping)
             if (uFlashContrastFlattening >= 0) GLES20.glUniform1f(uFlashContrastFlattening, profile.flashBehavior.contrastFlattening)
+            if (uLeakIntensity >= 0) GLES20.glUniform1f(uLeakIntensity, leakIntensity)
+            if (uLeakOrigin >= 0) GLES20.glUniform2f(uLeakOrigin, leakOriginX, leakOriginY)
         } else {
             if (uHalationStrength >= 0) GLES20.glUniform1f(uHalationStrength, profile.halationStrength)
             if (uFlashCenterBoost >= 0) GLES20.glUniform1f(uFlashCenterBoost, 0f)
             if (uFlashWarmBloom >= 0) GLES20.glUniform1f(uFlashWarmBloom, 0f)
             if (uFlashHighlightClipping >= 0) GLES20.glUniform1f(uFlashHighlightClipping, 0f)
             if (uFlashContrastFlattening >= 0) GLES20.glUniform1f(uFlashContrastFlattening, 0f)
+            if (uLeakIntensity >= 0) GLES20.glUniform1f(uLeakIntensity, 0f)
         }
     }
 }

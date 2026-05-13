@@ -17,6 +17,16 @@ data class FlashBehavior(
 )
 
 /**
+ * Defines the probability and intensity of procedural light leaks during export.
+ */
+data class LightLeakBehavior(
+    /** Probability (0.0 to 1.0) of a light leak occurring. */
+    val probability: Float = 0f,
+    /** Maximum intensity multiplier for the leak. */
+    val maxIntensity: Float = 0f
+)
+
+/**
  * Tunable parameters for the realtime retro camera fragment pipeline.
  * Values map 1:1 to GLSL uniforms (see [RetroPipelineShaders] / preview [VintixRenderer]).
  *
@@ -46,7 +56,9 @@ data class CameraProfile(
     /** Quality setting for JPEG compression upon export (0-100). */
     val jpegQuality: Int = 92,
     /** Flash characteristics applied during photo export. */
-    val flashBehavior: FlashBehavior = FlashBehavior()
+    val flashBehavior: FlashBehavior = FlashBehavior(),
+    /** Probabilistic light leak behavior applied during photo export. */
+    val lightLeakBehavior: LightLeakBehavior = LightLeakBehavior()
 ) {
     companion object {
         /** Default tuning preserved from the original hardcoded shader. */
@@ -134,6 +146,10 @@ object CameraProfiles {
             highlightClipping = 0.4f,
             contrastFlattening = 0.1f,
             extraHalation = 1.5f
+        ),
+        lightLeakBehavior = LightLeakBehavior(
+            probability = 0.40f,
+            maxIntensity = 0.85f
         )
     )
 }

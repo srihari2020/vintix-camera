@@ -33,7 +33,14 @@ class RetroPhotoGlPipeline private constructor() {
 
     private var initialized = false
 
-    fun process(source: Bitmap, profile: CameraProfile, noisePhase: Float): Bitmap {
+    fun process(
+        source: Bitmap, 
+        profile: CameraProfile, 
+        noisePhase: Float,
+        leakIntensity: Float = 0f,
+        leakOriginX: Float = 0f,
+        leakOriginY: Float = 0f
+    ): Bitmap {
         val w0 = source.width
         val h0 = source.height
         if (w0 <= 0 || h0 <= 0) throw IllegalArgumentException("Invalid bitmap size")
@@ -111,7 +118,7 @@ class RetroPhotoGlPipeline private constructor() {
 
             val program = shaderProgram!!
             program.use()
-            profileUniforms!!.upload(profile, noisePhase, true)
+            profileUniforms!!.upload(profile, noisePhase, true, leakIntensity, leakOriginX, leakOriginY)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTex)
@@ -248,12 +255,19 @@ class RetroPhotoGlPipeline private constructor() {
          * Processes [source] through the retro pipeline. Caller must not use OpenGL on the same
          * thread concurrently with other EGL contexts unless this is the only GLES work on the thread.
          */
-        fun processBitmap(source: Bitmap, profile: CameraProfile, noisePhase: Float): Bitmap {
+        fun processBitmap(
+            source: Bitmap, 
+            profile: CameraProfile, 
+            noisePhase: Float,
+            leakIntensity: Float = 0f,
+            leakOriginX: Float = 0f,
+            leakOriginY: Float = 0f
+        ): Bitmap {
             synchronized(globalLock) {
                 if (instance == null) {
                     instance = RetroPhotoGlPipeline()
                 }
-                return instance!!.process(source, profile, noisePhase)
+                return instance!!.process(source, profile, noisePhase, leakIntensity, leakOriginX, leakOriginY)
             }
         }
 

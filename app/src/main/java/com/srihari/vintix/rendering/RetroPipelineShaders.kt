@@ -171,6 +171,38 @@ precision mediump float;
             uniform float uFlashHighlightClipping;
             uniform float uFlashContrastFlattening;
 
+            uniform float uLeakIntensity;
+            uniform vec2 uLeakOrigin;
+
+            vec3 vnx_apply_light_leak(vec3 c, vec2 uv) {
+                if (uLeakIntensity <= 0.0) return c;
+                
+                float dist = length(uv - uLeakOrigin);
+                
+                // Irregular shape using sine waves based on angle
+                float angle = atan(uv.y - uLeakOrigin.y, uv.x - uLeakOrigin.x);
+                float irregularity = sin(angle * 4.0) * 0.1 + sin(angle * 9.0) * 0.05;
+                
+                // Smooth gradient falloff
+                float leakMask = smoothstep(0.9 + irregularity, 0.0, dist) * uLeakIntensity;
+                
+                // Color gradient: yellow/white hot core -> fiery orange -> deep red edge
+                vec3 coreColor = vec3(1.0, 0.9, 0.6);
+                vec3 midColor = vec3(1.0, 0.4, 0.0);
+                vec3 edgeColor = vec3(0.8, 0.0, 0.0);
+                
+                // Map the mask to color
+                vec3 leakColor = mix(edgeColor, midColor, smoothstep(0.2, 0.6, leakMask));
+                leakColor = mix(leakColor, coreColor, smoothstep(0.6, 1.0, leakMask));
+                
+                // Wash out contrast (lift blacks, reduce saturation) where leak is strong
+                c = mix(c, c + vec3(0.15, 0.05, 0.0), leakMask * 0.4);
+                
+                // Additive blend with soft clamping (simulating overexposure on negative film)
+                vec3 addedLight = leakColor * leakMask;
+                return c + addedLight;
+            }
+
             vec4 vnx_retro_color_pipeline(VKX_SAMPLER tex, vec2 uv) {
                 vec4 lc = vnx_lens_edge_capture(tex, uv);
                 vec3 c = lc.rgb;
@@ -203,6 +235,10 @@ precision mediump float;
                 float yb = vnx_luma709(c);
                 float damp = 1.0 - 0.38 * smoothstep(0.62, 0.96, yb);
                 c = clamp(c + halo * damp, 0.0, 1.0);
+                
+                // PROCEDURAL LIGHT LEAK
+                c = vnx_apply_light_leak(c, uv);
+                
                 c = clamp(vnx_ccd_sensor_clarity(tex, uv, c), 0.0, 1.0);
                 c = clamp(vnx_ccd_micro_contrast(c), 0.0, 1.0);
                 c = clamp(vnx_ccd_sensor_noise(c, uNoisePhase), 0.0, 1.0);

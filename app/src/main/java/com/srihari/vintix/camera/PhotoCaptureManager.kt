@@ -64,7 +64,30 @@ class PhotoCaptureManager(private val context: Context) {
                         val oriented = applyExifRotation(temp.absolutePath, decoded)
                         if (oriented !== decoded) decoded.recycle()
                         
-                        var processed = RetroPhotoGlPipeline.processBitmap(oriented, cameraProfile, noisePhase)
+                        var leakIntensity = 0f
+                        var leakOriginX = 0f
+                        var leakOriginY = 0f
+                        
+                        val leakConfig = cameraProfile.lightLeakBehavior
+                        if (leakConfig.probability > 0f && Math.random() < leakConfig.probability) {
+                            leakIntensity = leakConfig.maxIntensity * (0.6f + 0.4f * Math.random().toFloat())
+                            val edge = (Math.random() * 4).toInt()
+                            when (edge) {
+                                0 -> { leakOriginX = -0.1f - Math.random().toFloat() * 0.2f; leakOriginY = Math.random().toFloat() }
+                                1 -> { leakOriginX = 1.1f + Math.random().toFloat() * 0.2f; leakOriginY = Math.random().toFloat() }
+                                2 -> { leakOriginX = Math.random().toFloat(); leakOriginY = -0.1f - Math.random().toFloat() * 0.2f }
+                                3 -> { leakOriginX = Math.random().toFloat(); leakOriginY = 1.1f + Math.random().toFloat() * 0.2f }
+                            }
+                        }
+                        
+                        var processed = RetroPhotoGlPipeline.processBitmap(
+                            oriented, 
+                            cameraProfile, 
+                            noisePhase,
+                            leakIntensity,
+                            leakOriginX,
+                            leakOriginY
+                        )
                         if (oriented !== processed) oriented.recycle()
                         
                         if (timestampStyle != null) {
