@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.srihari.vintix.camera.CameraManager
@@ -35,7 +36,8 @@ private const val TAG = "CameraScreen"
 
 @Composable
 fun CameraScreen(
-    viewModel: CameraViewModel = viewModel()
+    viewModel: CameraViewModel = viewModel(),
+    onNavigateToGallery: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val isCameraPermissionGranted by viewModel.isCameraPermissionGranted.collectAsState()
@@ -137,6 +139,7 @@ fun CameraScreen(
                     photoCaptureManager.capturePhoto(
                         imageCapture = imageCapture,
                         cameraProfile = currentProfile,
+                        profileName = selectedProfileName,
                         noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
                         timestampStyle = com.srihari.vintix.rendering.timestamp.TimestampStyles.ClassicOrange,
                         onSuccess = { uri ->
@@ -164,6 +167,23 @@ fun CameraScreen(
                     .navigationBarsPadding()
                     .padding(bottom = 32.dp)
             )
+
+            // Gallery Button — bottom right
+            androidx.compose.material3.TextButton(
+                onClick = onNavigateToGallery,
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .navigationBarsPadding()
+                    .padding(bottom = 32.dp, end = 16.dp)
+            ) {
+                Text(
+                    text = "GALLERY",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
         } else {
             Text(
                 text = "Camera permission required",

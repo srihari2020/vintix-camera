@@ -8,8 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import com.srihari.vintix.ui.camera.CameraScreen
+import com.srihari.vintix.ui.gallery.GalleryScreen
 import com.srihari.vintix.ui.theme.VintixTheme
+
+enum class AppScreen { CAMERA, GALLERY }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -17,11 +24,28 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             VintixTheme {
+                var currentScreen by remember { mutableStateOf(AppScreen.CAMERA) }
+
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    CameraScreen()
+                    when (currentScreen) {
+                        AppScreen.CAMERA -> {
+                            CameraScreen(
+                                onNavigateToGallery = {
+                                    currentScreen = AppScreen.GALLERY
+                                }
+                            )
+                        }
+                        AppScreen.GALLERY -> {
+                            GalleryScreen(
+                                onNavigateBack = {
+                                    currentScreen = AppScreen.CAMERA
+                                }
+                            )
+                        }
+                    }
                 }
             }
         }

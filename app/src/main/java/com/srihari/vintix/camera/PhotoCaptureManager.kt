@@ -11,6 +11,7 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
+import android.util.Log
 import com.srihari.vintix.rendering.CameraProfile
 import com.srihari.vintix.rendering.RetroPhotoGlPipeline
 import java.io.File
@@ -45,6 +46,7 @@ class PhotoCaptureManager(private val context: Context) {
     fun capturePhoto(
         imageCapture: ImageCapture,
         cameraProfile: CameraProfile,
+        profileName: String,
         noisePhase: Float,
         timestampStyle: com.srihari.vintix.rendering.timestamp.TimestampStyle?,
         onSuccess: (Uri) -> Unit,
@@ -99,7 +101,7 @@ class PhotoCaptureManager(private val context: Context) {
                             processed = stamped
                         }
                         
-                        val uri = insertProcessedJpeg(processed, cameraProfile.jpegQuality)
+                        val uri = insertProcessedJpeg(processed, cameraProfile.jpegQuality, profileName)
                         processed.recycle()
                         temp.delete()
                         ContextCompat.getMainExecutor(context).execute { onSuccess(uri) }
@@ -128,7 +130,7 @@ class PhotoCaptureManager(private val context: Context) {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    private fun insertProcessedJpeg(bitmap: Bitmap, quality: Int): Uri {
+    private fun insertProcessedJpeg(bitmap: Bitmap, quality: Int, profileName: String): Uri {
         val timestamp = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(Date())
         val fileName = "$FILENAME_PREFIX$timestamp"
 
@@ -138,17 +140,31 @@ class PhotoCaptureManager(private val context: Context) {
             put(MediaStore.MediaColumns.RELATIVE_PATH, RELATIVE_PATH)
         }
 
+        val tempExifFile = File.createTempFile("vintix_exif_", ".jpg", context.cacheDir)
+        java.io.FileOutputStream(tempExifFile).use { out ->
+            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
+                throw IllegalStateException("JPEG compress to temp file failed")
+            }
+        }
+
+        try {
+            val exif = ExifInterface(tempExifFile.absolutePath)
+            exif.setAttribute(ExifInterface.TAG_MODEL, "Vintix - $profileName")
+            exif.saveAttributes()
+        } catch (e: Exception) {
+            Log.w("PhotoCaptureManager", "Failed to write EXIF data", e)
+        }
+
         val resolver = context.contentResolver
         val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
         val uri = resolver.insert(collection, contentValues)
             ?: throw IllegalStateException("MediaStore insert failed")
 
         resolver.openOutputStream(uri)?.use { out ->
-            if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
-                throw IllegalStateException("JPEG compress failed")
-            }
+            java.io.FileInputStream(tempExifFile).copyTo(out)
         } ?: throw IllegalStateException("Could not open output stream for $uri")
 
+        tempExifFile.delete()
         return uri
     }
 }
