@@ -26,6 +26,30 @@ data class LightLeakBehavior(
     val maxIntensity: Float = 0f
 )
 
+
+
+/**
+ * Defines per-capture random variance applied to camera properties for organic inconsistency.
+ */
+data class InstabilityBehavior(
+    /** Variance applied to exposure multiplier (e.g. 0.05 means +/- 0.05). */
+    val exposureVariance: Float = 0f,
+    /** Variance applied to warmth. */
+    val warmthVariance: Float = 0f,
+    /** Variance applied to vignette. */
+    val vignetteVariance: Float = 0f,
+    /** Variance applied to halation. */
+    val halationVariance: Float = 0f,
+    /** Variance applied to sensor noise. */
+    val noiseVariance: Float = 0f
+) {
+    /** Helper to generate a randomly jittered value. */
+    fun jitter(base: Float, variance: Float): Float {
+        if (variance <= 0f) return base
+        return base + (Math.random().toFloat() * 2f - 1f) * variance
+    }
+}
+
 /**
  * Tunable parameters for the realtime retro camera fragment pipeline.
  * Values map 1:1 to GLSL uniforms (see [RetroPipelineShaders] / preview [VintixRenderer]).
@@ -55,11 +79,28 @@ data class CameraProfile(
     val lensSoftness: Float = 1f,
     /** Quality setting for JPEG compression upon export (0-100). */
     val jpegQuality: Int = 92,
+    /** Base exposure multiplier (1.0 = normal exposure). */
+    val exposureMultiplier: Float = 1f,
     /** Flash characteristics applied during photo export. */
     val flashBehavior: FlashBehavior = FlashBehavior(),
     /** Probabilistic light leak behavior applied during photo export. */
-    val lightLeakBehavior: LightLeakBehavior = LightLeakBehavior()
+    val lightLeakBehavior: LightLeakBehavior = LightLeakBehavior(),
+    /** Instability/randomness configuration applied per-capture. */
+    val instabilityBehavior: InstabilityBehavior = InstabilityBehavior()
 ) {
+    /** Generates a new profile with jittered parameters for a single capture. */
+    fun applyInstability(): CameraProfile {
+        if (instabilityBehavior == InstabilityBehavior()) return this
+        val i = instabilityBehavior
+        return this.copy(
+            exposureMultiplier = i.jitter(exposureMultiplier, i.exposureVariance).coerceAtLeast(0f),
+            warmth = i.jitter(warmth, i.warmthVariance).coerceAtLeast(0f),
+            vignetteIntensity = i.jitter(vignetteIntensity, i.vignetteVariance).coerceAtLeast(0f),
+            halationStrength = i.jitter(halationStrength, i.halationVariance).coerceAtLeast(0f),
+            sensorNoise = i.jitter(sensorNoise, i.noiseVariance).coerceAtLeast(0f)
+        )
+    }
+
     companion object {
         /** Default tuning preserved from the original hardcoded shader. */
         val Default = CameraProfile(
@@ -70,6 +111,11 @@ data class CameraProfile(
                 highlightClipping = 0.6f,
                 contrastFlattening = 0.15f,
                 extraHalation = 1.2f
+            ),
+            instabilityBehavior = InstabilityBehavior(
+                exposureVariance = 0.03f,
+                warmthVariance = 0.05f,
+                noiseVariance = 0.1f
             )
         )
     }
@@ -124,6 +170,11 @@ object CameraProfiles {
             highlightClipping = 0.9f,
             contrastFlattening = 0.3f,
             extraHalation = 1.8f
+        ),
+        instabilityBehavior = InstabilityBehavior(
+            exposureVariance = 0.08f,
+            warmthVariance = 0.1f,
+            noiseVariance = 0.3f
         )
     )
 
@@ -150,6 +201,13 @@ object CameraProfiles {
         lightLeakBehavior = LightLeakBehavior(
             probability = 0.40f,
             maxIntensity = 0.85f
+        ),
+        instabilityBehavior = InstabilityBehavior(
+            exposureVariance = 0.15f,
+            warmthVariance = 0.25f,
+            vignetteVariance = 0.1f,
+            halationVariance = 0.3f,
+            noiseVariance = 0.2f
         )
     )
 }

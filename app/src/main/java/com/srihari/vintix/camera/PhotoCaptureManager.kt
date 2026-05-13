@@ -68,7 +68,10 @@ class PhotoCaptureManager(private val context: Context) {
                         var leakOriginX = 0f
                         var leakOriginY = 0f
                         
-                        val leakConfig = cameraProfile.lightLeakBehavior
+                        // Apply single-capture randomized variations
+                        val captureProfile = cameraProfile.applyInstability()
+                        
+                        val leakConfig = captureProfile.lightLeakBehavior
                         if (leakConfig.probability > 0f && Math.random() < leakConfig.probability) {
                             leakIntensity = leakConfig.maxIntensity * (0.6f + 0.4f * Math.random().toFloat())
                             val edge = (Math.random() * 4).toInt()
@@ -82,7 +85,7 @@ class PhotoCaptureManager(private val context: Context) {
                         
                         var processed = RetroPhotoGlPipeline.processBitmap(
                             oriented, 
-                            cameraProfile, 
+                            captureProfile, 
                             noisePhase,
                             leakIntensity,
                             leakOriginX,

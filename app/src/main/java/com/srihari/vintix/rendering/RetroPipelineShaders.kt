@@ -174,6 +174,8 @@ precision mediump float;
             uniform float uLeakIntensity;
             uniform vec2 uLeakOrigin;
 
+            uniform float uExposureMultiplier;
+
             vec3 vnx_apply_light_leak(vec3 c, vec2 uv) {
                 if (uLeakIntensity <= 0.0) return c;
                 
@@ -206,6 +208,8 @@ precision mediump float;
             vec4 vnx_retro_color_pipeline(VKX_SAMPLER tex, vec2 uv) {
                 vec4 lc = vnx_lens_edge_capture(tex, uv);
                 vec3 c = lc.rgb;
+                
+                c *= uExposureMultiplier;
                 
                 // FLASH PASS 1: Center exposure boost & contrast flattening
                 if (uFlashCenterBoost > 0.0) {

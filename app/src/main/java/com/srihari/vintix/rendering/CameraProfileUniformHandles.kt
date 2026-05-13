@@ -23,6 +23,7 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
     private val uFlashContrastFlattening = program.getUniformLocation("uFlashContrastFlattening")
     private val uLeakIntensity = program.getUniformLocation("uLeakIntensity")
     private val uLeakOrigin = program.getUniformLocation("uLeakOrigin")
+    private val uExposureMultiplier = program.getUniformLocation("uExposureMultiplier")
 
     fun upload(
         profile: CameraProfile, 
@@ -40,6 +41,7 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
         if (uSensorNoise >= 0) GLES20.glUniform1f(uSensorNoise, profile.sensorNoise)
         if (uChromaticAberration >= 0) GLES20.glUniform1f(uChromaticAberration, profile.chromaticAberration)
         if (uLensSoftness >= 0) GLES20.glUniform1f(uLensSoftness, profile.lensSoftness)
+        if (uExposureMultiplier >= 0) GLES20.glUniform1f(uExposureMultiplier, profile.exposureMultiplier)
 
         if (isExport) {
             if (uHalationStrength >= 0) GLES20.glUniform1f(uHalationStrength, profile.halationStrength * profile.flashBehavior.extraHalation)
