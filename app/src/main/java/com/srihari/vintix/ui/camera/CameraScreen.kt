@@ -9,6 +9,7 @@ import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -77,24 +78,32 @@ fun CameraScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCameraPermissionGranted) {
-            // Camera preview via OpenGL pipeline — fills entire screen
-            GLPreview(
-                cameraProfile = currentProfile,
-                onCameraReady = { manager ->
-                    cameraManager = manager
-                },
-                onGlViewReady = { glViewRef = it }
-            )
+            // Camera preview via OpenGL pipeline — fills entire screen with proper aspect ratio letterboxing
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                val portraitRatio = 1f / currentProfile.aspectRatio.ratio
+                Box(modifier = Modifier.aspectRatio(portraitRatio)) {
+                    GLPreview(
+                        cameraProfile = currentProfile,
+                        onCameraReady = { manager ->
+                            cameraManager = manager
+                        },
+                        onGlViewReady = { glViewRef = it }
+                    )
 
-            // Capture flash overlay
-            val capturingState = captureState as? CaptureState.Capturing
-            CaptureFlashOverlay(
-                trigger = capturingState != null,
-                durationMs = capturingState?.feedback?.flashFadeDurationMs ?: 0,
-                onAnimationComplete = {
-                    // Animation complete, state resets when CaptureState.Success is emitted
+                    // Capture flash overlay
+                    val capturingState = captureState as? CaptureState.Capturing
+                    CaptureFlashOverlay(
+                        trigger = capturingState != null,
+                        durationMs = capturingState?.feedback?.flashFadeDurationMs ?: 0,
+                        onAnimationComplete = {
+                            // Animation complete, state resets when CaptureState.Success is emitted
+                        }
+                    )
                 }
-            )
+            }
 
             // Profile Selector — above shutter button
             ProfileSelector(

@@ -63,6 +63,15 @@ data class FeedbackBehavior(
 )
 
 /**
+ * Defines the physical aspect ratio of the camera sensor.
+ */
+enum class AspectRatio(val ratio: Float, val label: String) {
+    RATIO_4_3(4f / 3f, "4:3"),
+    RATIO_3_2(3f / 2f, "3:2"),
+    RATIO_16_9(16f / 9f, "16:9")
+}
+
+/**
  * Tunable parameters for the realtime retro camera fragment pipeline.
  * Values map 1:1 to GLSL uniforms (see [RetroPipelineShaders] / preview [VintixRenderer]).
  *
@@ -93,6 +102,10 @@ data class CameraProfile(
     val jpegQuality: Int = 92,
     /** Base exposure multiplier (1.0 = normal exposure). */
     val exposureMultiplier: Float = 1f,
+    /** Target aspect ratio for framing and export. */
+    val aspectRatio: AspectRatio = AspectRatio.RATIO_4_3,
+    /** Maximum pixel length of the longest side during export. Null means native sensor resolution. */
+    val exportResolution: Int? = null,
     /** Flash characteristics applied during photo export. */
     val flashBehavior: FlashBehavior = FlashBehavior(),
     /** Probabilistic light leak behavior applied during photo export. */
@@ -119,6 +132,8 @@ data class CameraProfile(
         /** Default tuning preserved from the original hardcoded shader. */
         val Default = CameraProfile(
             jpegQuality = 88,
+            aspectRatio = AspectRatio.RATIO_4_3,
+            exportResolution = 1600, // ~2MP authentic early digital res
             flashBehavior = FlashBehavior(
                 centerExposureBoost = 0.25f,
                 warmBloom = 0.3f,
@@ -162,6 +177,8 @@ object CameraProfiles {
         chromaticAberration = 0.5f,
         lensSoftness = 0.55f,
         jpegQuality = 95,
+        aspectRatio = AspectRatio.RATIO_4_3,
+        exportResolution = 1600,
         flashBehavior = FlashBehavior(
             centerExposureBoost = 0.15f,
             warmBloom = 0.1f,
@@ -190,6 +207,8 @@ object CameraProfiles {
         chromaticAberration = 0.8f,
         lensSoftness = 0.6f,
         jpegQuality = 82,
+        aspectRatio = AspectRatio.RATIO_4_3,
+        exportResolution = 1280, // ~1.2MP chunkier file
         flashBehavior = FlashBehavior(
             centerExposureBoost = 0.4f,
             warmBloom = 0.1f,
@@ -223,6 +242,8 @@ object CameraProfiles {
         chromaticAberration = 2.5f,
         lensSoftness = 1.8f,
         jpegQuality = 70,
+        aspectRatio = AspectRatio.RATIO_3_2,
+        exportResolution = null, // Max resolution, mimicking film
         flashBehavior = FlashBehavior(
             centerExposureBoost = 0.5f,
             warmBloom = 0.8f,

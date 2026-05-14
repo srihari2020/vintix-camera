@@ -72,6 +72,8 @@ class PhotoCaptureManager(private val context: Context) {
                         
                         // Apply single-capture randomized variations
                         val captureProfile = cameraProfile.applyInstability()
+                        val croppedAndScaled = applyCropAndScale(oriented, captureProfile)
+                        if (oriented !== croppedAndScaled) oriented.recycle()
                         
                         val leakConfig = captureProfile.lightLeakBehavior
                         if (leakConfig.probability > 0f && Math.random() < leakConfig.probability) {
@@ -86,14 +88,14 @@ class PhotoCaptureManager(private val context: Context) {
                         }
                         
                         var processed = RetroPhotoGlPipeline.processBitmap(
-                            oriented, 
+                            croppedAndScaled, 
                             captureProfile, 
                             noisePhase,
                             leakIntensity,
                             leakOriginX,
                             leakOriginY
                         )
-                        if (oriented !== processed) oriented.recycle()
+                        if (croppedAndScaled !== processed) croppedAndScaled.recycle()
                         
                         if (timestampStyle != null) {
                             val stamped = com.srihari.vintix.rendering.timestamp.TimestampRenderer.applyTimestamp(processed, timestampStyle)
@@ -117,6 +119,48 @@ class PhotoCaptureManager(private val context: Context) {
                 }
             }
         )
+    }
+
+    private fun applyCropAndScale(bitmap: Bitmap, profile: CameraProfile): Bitmap {
+        val w = bitmap.width
+        val h = bitmap.height
+        val isPortrait = w < h
+        val targetRatio = if (isPortrait) 1f / profile.aspectRatio.ratio else profile.aspectRatio.ratio
+        
+        var cropW = w
+        var cropH = h
+        
+        val currentRatio = w.toFloat() / h.toFloat()
+        if (currentRatio > targetRatio + 0.01f) {
+            cropW = (h * targetRatio).toInt()
+        } else if (currentRatio < targetRatio - 0.01f) {
+            cropH = (w / targetRatio).toInt()
+        }
+        
+        val cropX = (w - cropW) / 2
+        val cropY = (h - cropH) / 2
+        
+        var finalW = cropW
+        var finalH = cropH
+        
+        val maxResolution = profile.exportResolution
+        if (maxResolution != null) {
+            val longSide = Math.max(cropW, cropH)
+            if (longSide > maxResolution) {
+                val scale = maxResolution.toFloat() / longSide
+                finalW = (cropW * scale).toInt()
+                finalH = (cropH * scale).toInt()
+            }
+        }
+        
+        if (cropW == w && cropH == h && finalW == cropW && finalH == cropH) return bitmap
+        
+        val matrix = Matrix()
+        if (finalW != cropW || finalH != cropH) {
+            matrix.postScale(finalW.toFloat() / cropW, finalH.toFloat() / cropH)
+        }
+        
+        return Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH, matrix, true)
     }
 
     private fun applyExifRotation(path: String, bitmap: Bitmap): Bitmap {
