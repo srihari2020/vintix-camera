@@ -1,5 +1,6 @@
 package com.srihari.vintix.ui.camera
 
+import android.util.Log
 import android.view.Surface
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
@@ -19,7 +20,14 @@ import com.srihari.vintix.rendering.CameraProfile
 import com.srihari.vintix.rendering.VintixGLSurfaceView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
+
+private const val TAG = "GLPreview"
+
+/** Timeout for CameraX start from GLPreview (covers provider + bind). */
+private const val CAMERA_START_TIMEOUT_MS = 12_000L
 
 /**
  * Jetpack Compose wrapper that bridges CameraX and the OpenGL rendering pipeline.
@@ -52,20 +60,48 @@ fun GLPreview(
     val cameraManager = remember { CameraManager(context) }
     val scope = rememberCoroutineScope()
     val activeSurface = remember { AtomicReference<Surface?>() }
+    val isDisposed = remember { AtomicBoolean(false) }
 
     val glSurfaceView = remember {
         VintixGLSurfaceView(context).apply {
+            // Set up the pipeline failure callback — fires on GL thread if shaders fail
+            vintixRenderer.onGlPipelineFailed = { e ->
+                Log.e(TAG, "GL pipeline failed — triggering fallback", e)
+                scope.launch(Dispatchers.Main) {
+                    if (!isDisposed.get()) {
+                        onCameraError(e)
+                    }
+                }
+            }
+
             setOnSurfaceTextureAvailable { surfaceTexture ->
+                Log.d(TAG, "SurfaceTexture available — starting CameraX")
+                if (isDisposed.get()) {
+                    Log.w(TAG, "SurfaceTexture arrived after dispose — ignoring")
+                    return@setOnSurfaceTextureAvailable
+                }
                 // GL thread → main thread: start CameraX with this surface
                 scope.launch(Dispatchers.Main) {
+                    if (isDisposed.get()) {
+                        Log.w(TAG, "Disposed before camera start — aborting")
+                        return@launch
+                    }
                     val surface = Surface(surfaceTexture)
                     val previousSurface = activeSurface.get()
                     try {
-                        cameraManager.startCamera(lifecycleOwner, surface)
+                        Log.d(TAG, "Starting CameraX with GL Surface (timeout=${CAMERA_START_TIMEOUT_MS}ms)")
+                        val result = withTimeoutOrNull(CAMERA_START_TIMEOUT_MS) {
+                            cameraManager.startCamera(lifecycleOwner, surface)
+                        }
+                        if (result == null) {
+                            throw IllegalStateException("CameraX start timed out after ${CAMERA_START_TIMEOUT_MS}ms")
+                        }
                         activeSurface.set(surface)
                         previousSurface?.release()
+                        Log.d(TAG, "CameraX started successfully with GL Surface")
                         onCameraReady(cameraManager)
                     } catch (e: Exception) {
+                        Log.e(TAG, "CameraX start failed", e)
                         surface.release()
                         previousSurface?.release()
                         activeSurface.set(null)
@@ -82,8 +118,12 @@ fun GLPreview(
 
     // Push profile updates to the GL thread safely
     LaunchedEffect(cameraProfile) {
-        glSurfaceView.queueEvent {
-            glSurfaceView.vintixRenderer.cameraProfile = cameraProfile
+        try {
+            glSurfaceView.queueEvent {
+                glSurfaceView.vintixRenderer.cameraProfile = cameraProfile
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to queue profile update", e)
         }
     }
 
@@ -95,14 +135,22 @@ fun GLPreview(
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> glSurfaceView.onPause()
-                Lifecycle.Event.ON_RESUME -> glSurfaceView.onResume()
+                Lifecycle.Event.ON_PAUSE -> {
+                    Log.d(TAG, "Lifecycle ON_PAUSE")
+                    glSurfaceView.onPause()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    Log.d(TAG, "Lifecycle ON_RESUME")
+                    glSurfaceView.onResume()
+                }
                 else -> { /* no-op */ }
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
 
         onDispose {
+            Log.d(TAG, "onDispose — stopping camera and releasing surface")
+            isDisposed.set(true)
             lifecycleOwner.lifecycle.removeObserver(observer)
             cameraManager.stopCamera()
             activeSurface.getAndSet(null)?.release()

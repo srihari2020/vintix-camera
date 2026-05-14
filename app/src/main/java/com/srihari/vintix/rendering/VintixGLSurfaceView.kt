@@ -3,6 +3,7 @@ package com.srihari.vintix.rendering
 import android.content.Context
 import android.graphics.SurfaceTexture
 import android.opengl.GLSurfaceView
+import android.util.Log
 
 /**
  * Custom [GLSurfaceView] configured for the Vintix rendering pipeline.
@@ -14,8 +15,20 @@ import android.opengl.GLSurfaceView
  */
 class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
+    companion object {
+        private const val TAG = "VintixGLSV"
+    }
+
     /** The renderer instance — accessible for configuration. */
     val vintixRenderer: VintixRenderer
+
+    /** Tracks whether the view is currently paused to prevent double-calls. */
+    @Volatile
+    private var isPaused: Boolean = false
+
+    /** Tracks whether the view has been detached (terminal state). */
+    @Volatile
+    private var isDetached: Boolean = false
 
     init {
         // Request OpenGL ES 2.0 context
@@ -28,6 +41,8 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
         // Continuous rendering for realtime camera feed
         renderMode = RENDERMODE_CONTINUOUSLY
+
+        Log.d(TAG, "Initialized — EGL context version=2, preserveOnPause=true, renderMode=CONTINUOUSLY")
     }
 
     /**
@@ -41,15 +56,59 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
         vintixRenderer.onSurfaceTextureAvailable = callback
     }
 
+    override fun onPause() {
+        if (isDetached) {
+            Log.w(TAG, "onPause ignored — view already detached")
+            return
+        }
+        if (isPaused) {
+            Log.w(TAG, "onPause ignored — already paused")
+            return
+        }
+        Log.d(TAG, "onPause")
+        isPaused = true
+        try {
+            super.onPause()
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during onPause", e)
+        }
+    }
+
+    override fun onResume() {
+        if (isDetached) {
+            Log.w(TAG, "onResume ignored — view already detached")
+            return
+        }
+        if (!isPaused) {
+            Log.d(TAG, "onResume (was not paused — calling super anyway)")
+        } else {
+            Log.d(TAG, "onResume")
+        }
+        isPaused = false
+        try {
+            super.onResume()
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during onResume", e)
+        }
+    }
+
     /**
      * Clean up GPU resources when the view is detached.
      */
     override fun onDetachedFromWindow() {
+        Log.d(TAG, "onDetachedFromWindow — releasing renderer")
+        isDetached = true
         runCatching {
             queueEvent {
                 vintixRenderer.release()
             }
+        }.onFailure { e ->
+            Log.e(TAG, "Exception queuing renderer release", e)
         }
-        super.onDetachedFromWindow()
+        try {
+            super.onDetachedFromWindow()
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception during super.onDetachedFromWindow", e)
+        }
     }
 }

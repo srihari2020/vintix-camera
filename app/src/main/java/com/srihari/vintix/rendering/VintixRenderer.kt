@@ -65,6 +65,15 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private val frameGovernor = PreviewFrameGovernor()
 
     /**
+     * Set to true if the GL pipeline initialization failed.
+     * When true, [onDrawFrame] becomes a no-op (clear only) and
+     * [onGlPipelineFailed] is invoked to trigger fallback.
+     */
+    @Volatile
+    var initFailed: Boolean = false
+        private set
+
+    /**
      * Latest noise phase used for preview (for aligning still export grain with live view).
      * Updated on the GL thread each frame.
      */
@@ -81,6 +90,10 @@ class VintixRenderer : GLSurfaceView.Renderer {
     /** The SurfaceTexture that receives camera frames. Created on the GL thread. */
     private var surfaceTexture: SurfaceTexture? = null
 
+    /** Whether the SurfaceTexture has been released (guards against double-release). */
+    @Volatile
+    private var surfaceTextureReleased: Boolean = false
+
     /** Transform matrix provided by SurfaceTexture for correct frame orientation. */
     private val texTransformMatrix = FloatArray(16)
 
@@ -91,62 +104,89 @@ class VintixRenderer : GLSurfaceView.Renderer {
      */
     var onSurfaceTextureAvailable: ((SurfaceTexture) -> Unit)? = null
 
+    /**
+     * Callback invoked (on the GL thread) when the GL pipeline fails to initialize.
+     * The UI layer can use this to trigger a fallback to CameraPreview.
+     */
+    var onGlPipelineFailed: ((Exception) -> Unit)? = null
+
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        Log.d(TAG, "Surface created — initializing camera pipeline")
+        Log.d(TAG, "onSurfaceCreated — initializing camera pipeline")
 
-        GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
-        rendererReady = false
-        surfaceTexture?.release()
-        surfaceTexture = null
+        try {
+            GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
+            rendererReady = false
+            initFailed = false
+            releaseSurfaceTextureSafely()
 
-        // Initialize identity matrix as default
-        Matrix.setIdentityM(texTransformMatrix, 0)
+            // Initialize identity matrix as default
+            Matrix.setIdentityM(texTransformMatrix, 0)
 
-        // Initialize shader program with camera (OES) shaders
-        shaderProgram = ShaderProgram()
-        val vertexShader = shaderProgram.compile(GLES20.GL_VERTEX_SHADER, CAMERA_VERTEX_SHADER)
-        val fragmentShader = shaderProgram.compile(GLES20.GL_FRAGMENT_SHADER, cameraFragmentShader())
+            // Initialize shader program with camera (OES) shaders
+            shaderProgram = ShaderProgram()
+            val vertexShader = shaderProgram.compile(GLES20.GL_VERTEX_SHADER, CAMERA_VERTEX_SHADER)
+            val fragmentShader = shaderProgram.compile(GLES20.GL_FRAGMENT_SHADER, cameraFragmentShader())
 
-        if (vertexShader == 0 || fragmentShader == 0) {
-            Log.e(TAG, "Shader compilation failed")
-            shaderProgram.release()
-            return
-        }
+            if (vertexShader == 0 || fragmentShader == 0) {
+                Log.e(TAG, "Shader compilation failed — vertex=$vertexShader, fragment=$fragmentShader")
+                shaderProgram.release()
+                initFailed = true
+                notifyPipelineFailed(RuntimeException("Shader compilation failed"))
+                return
+            }
 
-        if (!shaderProgram.link(vertexShader, fragmentShader)) {
-            Log.e(TAG, "Shader program linking failed")
-            shaderProgram.release()
-            return
-        }
+            if (!shaderProgram.link(vertexShader, fragmentShader)) {
+                Log.e(TAG, "Shader program linking failed")
+                shaderProgram.release()
+                initFailed = true
+                notifyPipelineFailed(RuntimeException("Shader program linking failed"))
+                return
+            }
 
-        textureUniformLocation = shaderProgram.getUniformLocation("uTexture")
-        texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
-        profileUniforms = CameraProfileUniformHandles(shaderProgram)
+            textureUniformLocation = shaderProgram.getUniformLocation("uTexture")
+            texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
+            profileUniforms = CameraProfileUniformHandles(shaderProgram)
 
-        // Initialize geometry
-        quad = TexturedQuad()
+            // Initialize geometry
+            quad = TexturedQuad()
 
-        // Create OES texture for camera frames
-        oesTextureId = createOESTexture()
+            // Create OES texture for camera frames
+            oesTextureId = createOESTexture()
+            if (oesTextureId == 0) {
+                Log.e(TAG, "OES texture creation failed")
+                shaderProgram.release()
+                initFailed = true
+                notifyPipelineFailed(RuntimeException("OES texture creation failed"))
+                return
+            }
 
-        // Create SurfaceTexture bound to the OES texture
-        surfaceTexture = SurfaceTexture(oesTextureId)
-        if (surfaceWidth > 0 && surfaceHeight > 0) {
-            surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
-        }
-        rendererReady = true
-        frameGovernor.reset()
+            // Create SurfaceTexture bound to the OES texture
+            surfaceTexture = SurfaceTexture(oesTextureId)
+            surfaceTextureReleased = false
+            if (surfaceWidth > 0 && surfaceHeight > 0) {
+                surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
+            }
+            rendererReady = true
+            frameGovernor.reset()
 
-        Log.d(TAG, "Camera pipeline initialized — program=${shaderProgram.programId}, oesTexture=$oesTextureId")
+            checkGlError("onSurfaceCreated end")
+            Log.d(TAG, "Camera pipeline initialized — program=${shaderProgram.programId}, oesTexture=$oesTextureId")
 
-        // Notify the UI layer that the SurfaceTexture is ready
-        surfaceTexture?.let { st ->
-            onSurfaceTextureAvailable?.invoke(st)
+            // Notify the UI layer that the SurfaceTexture is ready
+            surfaceTexture?.let { st ->
+                Log.d(TAG, "Invoking onSurfaceTextureAvailable callback")
+                onSurfaceTextureAvailable?.invoke(st)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "CRITICAL: onSurfaceCreated crashed", e)
+            rendererReady = false
+            initFailed = true
+            notifyPipelineFailed(e)
         }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        Log.d(TAG, "Surface changed: ${width}x${height}")
+        Log.d(TAG, "onSurfaceChanged: ${width}x${height}")
         surfaceWidth = width
         surfaceHeight = height
         GLES20.glViewport(0, 0, width, height)
@@ -162,44 +202,52 @@ class VintixRenderer : GLSurfaceView.Renderer {
     var freezePreview: Boolean = false
 
     override fun onDrawFrame(gl: GL10?) {
-        frameGovernor.awaitNextFrame()
-        val startNs = System.nanoTime()
-        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-        if (!rendererReady) return
+        try {
+            frameGovernor.awaitNextFrame()
+            val startNs = System.nanoTime()
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
-        // Pull the latest camera frame into the OES texture
-        surfaceTexture?.let { st ->
-            if (!freezePreview) {
-                try {
-                    st.updateTexImage()
-                    st.getTransformMatrix(texTransformMatrix)
-                } catch (e: RuntimeException) {
-                    Log.w(TAG, "SurfaceTexture update failed; rebuilding camera surface", e)
-                    recoverSurfaceTexture()
-                    return
+            // If init failed or not ready, just clear to black
+            if (initFailed || !rendererReady) return
+
+            // Pull the latest camera frame into the OES texture
+            val st = surfaceTexture
+            if (st != null && !surfaceTextureReleased) {
+                if (!freezePreview) {
+                    try {
+                        st.updateTexImage()
+                        st.getTransformMatrix(texTransformMatrix)
+                    } catch (e: RuntimeException) {
+                        Log.w(TAG, "SurfaceTexture update failed; rebuilding camera surface", e)
+                        recoverSurfaceTexture()
+                        return
+                    }
                 }
             }
+
+            // Bind shader program
+            shaderProgram.use()
+
+            // Pass the texture transform matrix
+            GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, texTransformMatrix, 0)
+
+            noisePhase = (noisePhase + 0.019f).rem(1f)
+            noisePhaseSnapshot = noisePhase
+            profileUniforms?.upload(cameraProfile, noisePhase, false)
+
+            // Bind OES texture to unit 0
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
+            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
+            GLES20.glUniform1i(textureUniformLocation, 0)
+
+            // Draw the fullscreen quad
+            quad.draw(shaderProgram)
+
+            PerformanceTelemetry.recordFrame(System.nanoTime() - startNs)
+        } catch (e: Exception) {
+            Log.e(TAG, "CRITICAL: onDrawFrame crashed", e)
+            // Don't let one bad frame kill the GL thread
         }
-
-        // Bind shader program
-        shaderProgram.use()
-
-        // Pass the texture transform matrix
-        GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, texTransformMatrix, 0)
-
-        noisePhase = (noisePhase + 0.019f).rem(1f)
-        noisePhaseSnapshot = noisePhase
-        profileUniforms?.upload(cameraProfile, noisePhase, false)
-
-        // Bind OES texture to unit 0
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, oesTextureId)
-        GLES20.glUniform1i(textureUniformLocation, 0)
-
-        // Draw the fullscreen quad
-        quad.draw(shaderProgram)
-        
-        PerformanceTelemetry.recordFrame(System.nanoTime() - startNs)
     }
 
     /**
@@ -211,6 +259,16 @@ class VintixRenderer : GLSurfaceView.Renderer {
         GLES20.glGenTextures(1, textures, 0)
         val texId = textures[0]
 
+        val genErr = GLES20.glGetError()
+        if (genErr != GLES20.GL_NO_ERROR) {
+            Log.e(TAG, "glGenTextures error: $genErr")
+            return 0
+        }
+        if (texId == 0) {
+            Log.e(TAG, "glGenTextures returned 0")
+            return 0
+        }
+
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, texId)
 
         // Linear filtering for smooth camera preview
@@ -221,6 +279,12 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0)
 
+        val bindErr = GLES20.glGetError()
+        if (bindErr != GLES20.GL_NO_ERROR) {
+            Log.e(TAG, "OES texture setup error: $bindErr")
+        }
+
+        Log.d(TAG, "Created OES texture id=$texId")
         return texId
     }
 
@@ -229,9 +293,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
      * Call when the GL surface is being destroyed.
      */
     fun release() {
+        Log.d(TAG, "release() — cleaning up GPU resources")
         rendererReady = false
-        surfaceTexture?.release()
-        surfaceTexture = null
+        releaseSurfaceTextureSafely()
         if (::shaderProgram.isInitialized) shaderProgram.release()
         if (::quad.isInitialized) quad.release()
         if (oesTextureId != 0) {
@@ -240,21 +304,53 @@ class VintixRenderer : GLSurfaceView.Renderer {
         }
     }
 
-    private fun recoverSurfaceTexture() {
-        rendererReady = false
-        surfaceTexture?.release()
+    private fun releaseSurfaceTextureSafely() {
+        if (surfaceTextureReleased) return
+        try {
+            surfaceTexture?.release()
+        } catch (e: Exception) {
+            Log.w(TAG, "SurfaceTexture release exception (may already be released)", e)
+        }
         surfaceTexture = null
+        surfaceTextureReleased = true
+    }
+
+    private fun recoverSurfaceTexture() {
+        Log.d(TAG, "Recovering SurfaceTexture")
+        rendererReady = false
+        releaseSurfaceTextureSafely()
         if (oesTextureId != 0) {
             GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
         }
         oesTextureId = createOESTexture()
+        if (oesTextureId == 0) {
+            Log.e(TAG, "Recovery failed — OES texture creation failed")
+            initFailed = true
+            return
+        }
         surfaceTexture = SurfaceTexture(oesTextureId)
+        surfaceTextureReleased = false
         if (surfaceWidth > 0 && surfaceHeight > 0) {
             surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
         }
         Matrix.setIdentityM(texTransformMatrix, 0)
         rendererReady = true
         surfaceTexture?.let { onSurfaceTextureAvailable?.invoke(it) }
+    }
+
+    private fun notifyPipelineFailed(e: Exception) {
+        try {
+            onGlPipelineFailed?.invoke(e)
+        } catch (callbackErr: Exception) {
+            Log.e(TAG, "onGlPipelineFailed callback threw", callbackErr)
+        }
+    }
+
+    private fun checkGlError(label: String) {
+        val err = GLES20.glGetError()
+        if (err != GLES20.GL_NO_ERROR) {
+            Log.e(TAG, "GL error at [$label]: $err")
+        }
     }
 }
 

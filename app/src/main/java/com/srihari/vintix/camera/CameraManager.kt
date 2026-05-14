@@ -16,6 +16,7 @@ import androidx.lifecycle.LifecycleOwner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.coroutines.resume
 
 /**
@@ -29,6 +30,10 @@ class CameraManager(private val context: Context) {
     private var cameraProvider: ProcessCameraProvider? = null
     private var previewUseCase: Preview? = null
 
+    /** Guards against duplicate bindToLifecycle calls. */
+    @Volatile
+    private var isBound: Boolean = false
+
     /** Exposed for capture callers. Only available after [startCamera] completes. */
     var imageCapture: ImageCapture? = null
         private set
@@ -41,7 +46,15 @@ class CameraManager(private val context: Context) {
         lifecycleOwner: LifecycleOwner,
         surfaceProvider: Preview.SurfaceProvider
     ) {
-        val cameraProvider = getCameraProvider()
+        Log.d(TAG, "startCamera(SurfaceProvider) — requesting CameraProvider")
+
+        val provider = getTimedCameraProvider()
+        if (provider == null) {
+            val msg = "CameraProvider timed out after ${PROVIDER_TIMEOUT_MS}ms"
+            Log.e(TAG, msg)
+            throw IllegalStateException(msg)
+        }
+
         val rotation = targetRotation()
 
         val preview = Preview.Builder()
@@ -60,8 +73,12 @@ class CameraManager(private val context: Context) {
 
         withContext(Dispatchers.Main) {
             try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                Log.d(TAG, "Unbinding all use cases before rebind")
+                provider.unbindAll()
+                isBound = false
+
+                Log.d(TAG, "bindToLifecycle — preview + imageCapture")
+                provider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     preview,
@@ -69,9 +86,12 @@ class CameraManager(private val context: Context) {
                 )
                 previewUseCase = preview
                 imageCapture = imageCaptureUseCase
+                isBound = true
+                Log.d(TAG, "Camera bound successfully (SurfaceProvider mode)")
             } catch (e: Exception) {
                 previewUseCase = null
                 imageCapture = null
+                isBound = false
                 Log.e(TAG, "Camera binding failed", e)
                 throw e
             }
@@ -89,7 +109,15 @@ class CameraManager(private val context: Context) {
         lifecycleOwner: LifecycleOwner,
         surface: Surface
     ) {
-        val cameraProvider = getCameraProvider()
+        Log.d(TAG, "startCamera(Surface) — requesting CameraProvider")
+
+        val provider = getTimedCameraProvider()
+        if (provider == null) {
+            val msg = "CameraProvider timed out after ${PROVIDER_TIMEOUT_MS}ms"
+            Log.e(TAG, msg)
+            throw IllegalStateException(msg)
+        }
+
         val rotation = targetRotation()
 
         val preview = Preview.Builder()
@@ -97,10 +125,13 @@ class CameraManager(private val context: Context) {
             .build()
             .also {
                 it.surfaceProvider = Preview.SurfaceProvider { request ->
+                    Log.d(TAG, "SurfaceProvider.onSurfaceRequested — providing GL surface")
                     request.provideSurface(
                         surface,
                         ContextCompat.getMainExecutor(context)
-                    ) { /* Surface release handled by GL lifecycle */ }
+                    ) { result ->
+                        Log.d(TAG, "Surface release callback (resultCode=${result.resultCode})")
+                    }
                 }
             }
 
@@ -113,8 +144,12 @@ class CameraManager(private val context: Context) {
 
         withContext(Dispatchers.Main) {
             try {
-                cameraProvider.unbindAll()
-                cameraProvider.bindToLifecycle(
+                Log.d(TAG, "Unbinding all use cases before rebind")
+                provider.unbindAll()
+                isBound = false
+
+                Log.d(TAG, "bindToLifecycle — preview(Surface) + imageCapture")
+                provider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     preview,
@@ -122,9 +157,12 @@ class CameraManager(private val context: Context) {
                 )
                 previewUseCase = preview
                 imageCapture = imageCaptureUseCase
+                isBound = true
+                Log.d(TAG, "Camera bound successfully (Surface/GL mode)")
             } catch (e: Exception) {
                 previewUseCase = null
                 imageCapture = null
+                isBound = false
                 Log.e(TAG, "Camera binding failed", e)
                 throw e
             }
@@ -140,10 +178,16 @@ class CameraManager(private val context: Context) {
     }
 
     fun stopCamera() {
+        Log.d(TAG, "stopCamera — unbinding all")
         runOnMain {
-            cameraProvider?.unbindAll()
+            try {
+                cameraProvider?.unbindAll()
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during unbindAll", e)
+            }
             previewUseCase = null
             imageCapture = null
+            isBound = false
         }
     }
 
@@ -155,6 +199,23 @@ class CameraManager(private val context: Context) {
         }
     }
 
+    /**
+     * Gets the CameraProvider with a timeout to handle vendor delays
+     * (e.g., OnePlus devices that may stall ProcessCameraProvider.getInstance).
+     */
+    private suspend fun getTimedCameraProvider(): ProcessCameraProvider? {
+        // If we already have a provider, return it immediately
+        cameraProvider?.let {
+            Log.d(TAG, "Reusing existing CameraProvider")
+            return it
+        }
+
+        Log.d(TAG, "Awaiting ProcessCameraProvider.getInstance (timeout=${PROVIDER_TIMEOUT_MS}ms)")
+        return withTimeoutOrNull(PROVIDER_TIMEOUT_MS) {
+            getCameraProvider()
+        }
+    }
+
     private suspend fun getCameraProvider(): ProcessCameraProvider =
         suspendCancellableCoroutine { continuation ->
             val future = ProcessCameraProvider.getInstance(context)
@@ -162,12 +223,15 @@ class CameraManager(private val context: Context) {
                 try {
                     val provider = future.get()
                     cameraProvider = provider
+                    Log.d(TAG, "ProcessCameraProvider obtained successfully")
                     continuation.resume(provider)
                 } catch (e: Exception) {
+                    Log.e(TAG, "ProcessCameraProvider.getInstance failed", e)
                     continuation.resumeWith(Result.failure(e))
                 }
             }, ContextCompat.getMainExecutor(context))
             continuation.invokeOnCancellation {
+                Log.d(TAG, "getCameraProvider cancelled")
                 future.cancel(true)
             }
         }
@@ -190,6 +254,7 @@ class CameraManager(private val context: Context) {
 
     private companion object {
         private const val TAG = "CameraManager"
+        /** Timeout for ProcessCameraProvider.getInstance — generous for slow vendor init. */
+        private const val PROVIDER_TIMEOUT_MS = 10_000L
     }
 }
-

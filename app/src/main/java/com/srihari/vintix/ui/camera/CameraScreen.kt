@@ -70,6 +70,12 @@ fun CameraScreen(
         }
     }
 
+    /**
+     * Safe mode flag: when true, we use CameraPreview (PreviewView) instead of GLPreview.
+     * This is flipped automatically if the GL pipeline fails to initialize.
+     */
+    var useGlPreview by remember { mutableStateOf(true) }
+
     DisposableEffect(Unit) {
         onDispose {
             toneGenerator.release()
@@ -136,17 +142,44 @@ fun CameraScreen(
             ) {
                 val portraitRatio = 1f / currentProfile.aspectRatio.ratio
                 Box(modifier = Modifier.aspectRatio(portraitRatio)) {
-                    GLPreview(
-                        cameraProfile = currentProfile,
-                        onCameraReady = { manager ->
-                            cameraManager = manager
-                            viewModel.onCameraReady()
-                        },
-                        onGlViewReady = { glViewRef = it },
-                        onCameraError = { throwable ->
-                            viewModel.onCameraError(throwable.message ?: "Camera unavailable")
-                        }
-                    )
+                    if (useGlPreview) {
+                        // --- GL PIPELINE PATH ---
+                        GLPreview(
+                            cameraProfile = currentProfile,
+                            onCameraReady = { manager ->
+                                Log.d(TAG, "GLPreview camera ready")
+                                cameraManager = manager
+                                viewModel.onCameraReady()
+                            },
+                            onGlViewReady = { glViewRef = it },
+                            onCameraError = { throwable ->
+                                Log.e(TAG, "GLPreview error — falling back to CameraPreview", throwable)
+                                // Automatically fall back to safe mode
+                                useGlPreview = false
+                                glViewRef = null
+                                cameraManager = null
+                                viewModel.onCameraError(
+                                    "GL pipeline failed, using safe preview: ${throwable.message}"
+                                )
+                            }
+                        )
+                    } else {
+                        // --- SAFE MODE: CameraPreview (PreviewView) ---
+                        Log.d(TAG, "Using CameraPreview (safe mode)")
+                        CameraPreview(
+                            onCameraReady = { manager ->
+                                Log.d(TAG, "CameraPreview camera ready (safe mode)")
+                                cameraManager = manager
+                                viewModel.onCameraReady()
+                            },
+                            onCameraError = { throwable ->
+                                Log.e(TAG, "CameraPreview also failed", throwable)
+                                viewModel.onCameraError(
+                                    throwable.message ?: "Camera unavailable"
+                                )
+                            }
+                        )
+                    }
 
                     val capturingState = captureState as? CaptureState.Capturing
                     CaptureFlashOverlay(
@@ -161,6 +194,17 @@ fun CameraScreen(
 
             if (BuildConfig.TELEMETRY_ENABLED) {
                 TelemetryOverlay(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding())
+            }
+
+            // Safe mode indicator
+            if (!useGlPreview) {
+                CameraStatusOverlay(
+                    text = "SAFE MODE",
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .statusBarsPadding()
+                        .padding(top = 8.dp, end = 8.dp)
+                )
             }
 
             when (val availability = cameraAvailability) {
@@ -231,7 +275,8 @@ fun CameraScreen(
                         }
                     }
 
-                    if (feedback.captureFreezeMs > 0) {
+                    // Freeze preview only when GL pipeline is active
+                    if (useGlPreview && feedback.captureFreezeMs > 0) {
                         glViewRef?.vintixRenderer?.freezePreview = true
                         glViewRef?.postDelayed({
                             glViewRef?.vintixRenderer?.freezePreview = false

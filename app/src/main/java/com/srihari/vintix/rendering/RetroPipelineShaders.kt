@@ -8,7 +8,6 @@ package com.srihari.vintix.rendering
 object RetroPipelineShaders {
 
     private val RETRO_FRAGMENT_CORE: String = """
-precision mediump float;
             varying vec2 vTexCoord;
             uniform VKX_SAMPLER uTexture;
             uniform float uNoisePhase;
@@ -265,10 +264,20 @@ precision mediump float;
         }
     """
 
+    /**
+     * Fragment shader for OES external texture (camera preview).
+     * Uses highp precision for Adreno GPU compatibility with samplerExternalOES.
+     * Extension directive MUST be on the very first line for some drivers.
+     */
     fun fragmentShaderExternalOes(): String =
-        "#extension GL_OES_EGL_image_external : require\n" +
+        "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n" +
             RETRO_FRAGMENT_CORE.replace("VKX_SAMPLER", "samplerExternalOES")
 
+    /**
+     * Fragment shader for 2D texture (still export / FBO).
+     * Uses mediump precision which is sufficient for offline rendering.
+     */
     fun fragmentShaderTexture2d(): String =
-        RETRO_FRAGMENT_CORE.replace("VKX_SAMPLER", "sampler2D")
+        "precision mediump float;\n" +
+            RETRO_FRAGMENT_CORE.replace("VKX_SAMPLER", "sampler2D")
 }
