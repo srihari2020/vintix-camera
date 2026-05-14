@@ -34,6 +34,12 @@ import com.srihari.vintix.rendering.VintixGLSurfaceView
 import com.srihari.vintix.settings.SettingsViewModel
 import com.srihari.vintix.settings.timestampStyle
 import com.srihari.vintix.settings.withVintixSettings
+import com.srihari.vintix.telemetry.PerformanceTelemetry
+import com.srihari.vintix.BuildConfig
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.launch
 
 private const val TAG = "CameraScreen"
@@ -107,6 +113,10 @@ fun CameraScreen(
                         }
                     )
                 }
+            }
+
+            if (BuildConfig.DEBUG) {
+                TelemetryOverlay(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding())
             }
 
             ProfileSelector(
@@ -217,5 +227,32 @@ fun CameraScreen(
                 modifier = Modifier.align(Alignment.Center)
             )
         }
+    }
+}
+
+@Composable
+fun TelemetryOverlay(modifier: Modifier = Modifier) {
+    val fps by PerformanceTelemetry.fps.collectAsState()
+    val glRenderTimeMs by PerformanceTelemetry.glRenderTimeMs.collectAsState()
+    val exportTimeMs by PerformanceTelemetry.exportTimeMs.collectAsState()
+    val processingTimeMs by PerformanceTelemetry.processingTimeMs.collectAsState()
+    val memoryUsageMb by PerformanceTelemetry.memoryUsageMb.collectAsState()
+
+    Column(
+        modifier = modifier
+            .padding(8.dp)
+            .background(Color.Black.copy(alpha = 0.5f))
+            .padding(8.dp)
+    ) {
+        val textStyle = androidx.compose.ui.text.TextStyle(
+            color = Color.Green,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            fontSize = 10.sp
+        )
+        Text("FPS: $fps", style = textStyle)
+        Text("GL: ${String.format("%.1f", glRenderTimeMs)} ms", style = textStyle)
+        Text("Export: $exportTimeMs ms", style = textStyle)
+        Text("Proc: $processingTimeMs ms", style = textStyle)
+        Text("Mem: $memoryUsageMb MB", style = textStyle)
     }
 }

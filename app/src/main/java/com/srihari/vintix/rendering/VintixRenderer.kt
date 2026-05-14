@@ -8,6 +8,7 @@ import android.opengl.Matrix
 import android.util.Log
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import com.srihari.vintix.telemetry.PerformanceTelemetry
 
 /**
  * Core Vintix GPU renderer implementing [GLSurfaceView.Renderer].
@@ -145,6 +146,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
     var freezePreview: Boolean = false
 
     override fun onDrawFrame(gl: GL10?) {
+        val startNs = System.nanoTime()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
         // Pull the latest camera frame into the OES texture
@@ -172,6 +174,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
         // Draw the fullscreen quad
         quad.draw(shaderProgram)
+        
+        PerformanceTelemetry.recordFrame(System.nanoTime() - startNs)
     }
 
     /**

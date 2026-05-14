@@ -19,6 +19,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import com.srihari.vintix.telemetry.PerformanceTelemetry
 
 /**
  * Handles photo capture and MediaStore persistence.
@@ -60,7 +61,9 @@ class PhotoCaptureManager(private val context: Context) {
             photoExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                    val exportStartNs = System.nanoTime()
                     try {
+                        PerformanceTelemetry.updateMemory()
                         val decoded = BitmapFactory.decodeFile(temp.absolutePath)
                             ?: throw IllegalStateException("Bitmap decode failed")
                         val oriented = applyExifRotation(temp.absolutePath, decoded)
@@ -87,6 +90,7 @@ class PhotoCaptureManager(private val context: Context) {
                             }
                         }
                         
+                        val procStartNs = System.nanoTime()
                         var processed = RetroPhotoGlPipeline.processBitmap(
                             croppedAndScaled, 
                             captureProfile, 
@@ -95,6 +99,7 @@ class PhotoCaptureManager(private val context: Context) {
                             leakOriginX,
                             leakOriginY
                         )
+                        PerformanceTelemetry.recordProcessing(System.nanoTime() - procStartNs)
                         if (croppedAndScaled !== processed) croppedAndScaled.recycle()
                         
                         if (timestampStyle != null) {
@@ -106,9 +111,14 @@ class PhotoCaptureManager(private val context: Context) {
                         val uri = insertProcessedJpeg(processed, cameraProfile.jpegQuality, profileName)
                         processed.recycle()
                         temp.delete()
+                        
+                        PerformanceTelemetry.recordExport(System.nanoTime() - exportStartNs)
+                        PerformanceTelemetry.updateMemory()
+                        
                         ContextCompat.getMainExecutor(context).execute { onSuccess(uri) }
                     } catch (e: Exception) {
                         temp.delete()
+                        PerformanceTelemetry.updateMemory()
                         ContextCompat.getMainExecutor(context).execute { onError(e) }
                     }
                 }
