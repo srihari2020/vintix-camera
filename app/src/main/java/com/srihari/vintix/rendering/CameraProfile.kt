@@ -54,6 +54,8 @@ data class InstabilityBehavior(
 data class FeedbackBehavior(
     /** If true, plays a digital beep. If false, plays a mechanical shutter click. */
     val useDigitalBeep: Boolean = false,
+    /** If false, suppresses profile capture sound while preserving haptic/visual feedback. */
+    val soundEnabled: Boolean = true,
     /** If true, triggers a physical haptic bump on capture. */
     val hapticFeedback: Boolean = true,
     /** How long to freeze the live viewfinder (simulates mechanical mirror blackout or digital CCD freeze). */

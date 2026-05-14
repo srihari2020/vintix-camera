@@ -5,11 +5,10 @@ import android.content.pm.PackageManager
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import kotlinx.coroutines.launch
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
@@ -32,17 +31,24 @@ import com.srihari.vintix.camera.PhotoCaptureManager
 import com.srihari.vintix.rendering.CameraProfile
 import com.srihari.vintix.rendering.CameraProfiles
 import com.srihari.vintix.rendering.VintixGLSurfaceView
+import com.srihari.vintix.settings.SettingsViewModel
+import com.srihari.vintix.settings.timestampStyle
+import com.srihari.vintix.settings.withVintixSettings
+import kotlinx.coroutines.launch
 
 private const val TAG = "CameraScreen"
 
 @Composable
 fun CameraScreen(
     viewModel: CameraViewModel = viewModel(),
-    onNavigateToGallery: () -> Unit = {}
+    settingsViewModel: SettingsViewModel = viewModel(),
+    onNavigateToGallery: () -> Unit = {},
+    onNavigateToSettings: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val isCameraPermissionGranted by viewModel.isCameraPermissionGranted.collectAsState()
     val captureState by viewModel.captureState.collectAsState()
+    val appSettings by settingsViewModel.settings.collectAsState()
 
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
     var glViewRef by remember { mutableStateOf<VintixGLSurfaceView?>(null) }
@@ -54,7 +60,6 @@ fun CameraScreen(
         viewModel.onPermissionResult(isGranted)
     }
 
-    // Available profiles
     val profiles = mapOf(
         "Early Digital" to CameraProfiles.EarlyDigitalConsumer,
         "Daylight" to CameraProfiles.DaylightNeutral,
@@ -62,7 +67,8 @@ fun CameraScreen(
         "Disposable" to CameraProfiles.DisposableFilm
     )
     var selectedProfileName by remember { mutableStateOf(profiles.keys.first()) }
-    val currentProfile = profiles[selectedProfileName] ?: CameraProfile.Default
+    val baseProfile = profiles[selectedProfileName] ?: CameraProfile.Default
+    val currentProfile = baseProfile.withVintixSettings(appSettings)
 
     LaunchedEffect(Unit) {
         if (ContextCompat.checkSelfPermission(
@@ -78,7 +84,6 @@ fun CameraScreen(
 
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCameraPermissionGranted) {
-            // Camera preview via OpenGL pipeline — fills entire screen with proper aspect ratio letterboxing
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -93,19 +98,17 @@ fun CameraScreen(
                         onGlViewReady = { glViewRef = it }
                     )
 
-                    // Capture flash overlay
                     val capturingState = captureState as? CaptureState.Capturing
                     CaptureFlashOverlay(
                         trigger = capturingState != null,
                         durationMs = capturingState?.feedback?.flashFadeDurationMs ?: 0,
                         onAnimationComplete = {
-                            // Animation complete, state resets when CaptureState.Success is emitted
+                            // State resets when CaptureState.Success is emitted.
                         }
                     )
                 }
             }
 
-            // Profile Selector — above shutter button
             ProfileSelector(
                 profiles = profiles.keys.toList(),
                 selectedProfile = selectedProfileName,
@@ -120,41 +123,41 @@ fun CameraScreen(
             val view = androidx.compose.ui.platform.LocalView.current
             val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
-            // Shutter button — bottom center
             ShutterButton(
                 onClick = {
                     val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
                     val feedback = currentProfile.feedbackBehavior
-                    
+
                     if (feedback.hapticFeedback) {
                         view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
                     }
-                    if (feedback.useDigitalBeep) {
-                        android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 100)
-                            .startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 50)
-                    } else {
-                        android.media.MediaActionSound().play(android.media.MediaActionSound.SHUTTER_CLICK)
+                    if (feedback.soundEnabled) {
+                        if (feedback.useDigitalBeep) {
+                            android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 100)
+                                .startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 50)
+                        } else {
+                            android.media.MediaActionSound().play(android.media.MediaActionSound.SHUTTER_CLICK)
+                        }
                     }
-                    
+
                     if (feedback.captureFreezeMs > 0) {
                         glViewRef?.vintixRenderer?.freezePreview = true
                         glViewRef?.postDelayed({
                             glViewRef?.vintixRenderer?.freezePreview = false
                         }, feedback.captureFreezeMs)
                     }
-                    
+
                     viewModel.onCaptureStarted(feedback)
-                    
+
                     photoCaptureManager.capturePhoto(
                         imageCapture = imageCapture,
                         cameraProfile = currentProfile,
                         profileName = selectedProfileName,
                         noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
-                        timestampStyle = com.srihari.vintix.rendering.timestamp.TimestampStyles.ClassicOrange,
+                        timestampStyle = appSettings.timestampStyle(),
                         onSuccess = { uri ->
                             Log.d(TAG, "Photo saved: $uri")
                             viewModel.onPhotoCaptured(uri)
-                            // Reset state so flash can trigger again next time
                             coroutineScope.launch {
                                 kotlinx.coroutines.delay(100)
                                 viewModel.resetCaptureState()
@@ -169,15 +172,30 @@ fun CameraScreen(
                         }
                     )
                 },
-                enabled = cameraManager?.imageCapture != null
-                        && captureState !is CaptureState.Capturing,
+                enabled = cameraManager?.imageCapture != null &&
+                    captureState !is CaptureState.Capturing,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = 32.dp)
             )
 
-            // Gallery Button — bottom right
+            androidx.compose.material3.TextButton(
+                onClick = onNavigateToSettings,
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .navigationBarsPadding()
+                    .padding(bottom = 32.dp, start = 16.dp)
+            ) {
+                Text(
+                    text = "SETTINGS",
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+
             androidx.compose.material3.TextButton(
                 onClick = onNavigateToGallery,
                 modifier = Modifier
@@ -201,4 +219,3 @@ fun CameraScreen(
         }
     }
 }
-

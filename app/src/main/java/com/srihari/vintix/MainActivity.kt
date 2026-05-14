@@ -14,9 +14,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.srihari.vintix.ui.camera.CameraScreen
 import com.srihari.vintix.ui.gallery.GalleryScreen
+import com.srihari.vintix.ui.settings.SettingsScreen
 import com.srihari.vintix.ui.theme.VintixTheme
 
-enum class AppScreen { CAMERA, GALLERY }
+enum class AppScreen { CAMERA, GALLERY, SETTINGS }
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -35,11 +36,21 @@ class MainActivity : ComponentActivity() {
                             CameraScreen(
                                 onNavigateToGallery = {
                                     currentScreen = AppScreen.GALLERY
+                                },
+                                onNavigateToSettings = {
+                                    currentScreen = AppScreen.SETTINGS
                                 }
                             )
                         }
                         AppScreen.GALLERY -> {
                             GalleryScreen(
+                                onNavigateBack = {
+                                    currentScreen = AppScreen.CAMERA
+                                }
+                            )
+                        }
+                        AppScreen.SETTINGS -> {
+                            SettingsScreen(
                                 onNavigateBack = {
                                     currentScreen = AppScreen.CAMERA
                                 }
