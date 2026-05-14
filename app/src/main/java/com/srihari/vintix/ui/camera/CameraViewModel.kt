@@ -14,6 +14,12 @@ sealed interface CaptureState {
     data class Error(val message: String) : CaptureState
 }
 
+sealed interface CameraAvailability {
+    data object Initializing : CameraAvailability
+    data object Ready : CameraAvailability
+    data class Error(val message: String) : CameraAvailability
+}
+
 class CameraViewModel : ViewModel() {
 
     private val _isCameraPermissionGranted = MutableStateFlow(false)
@@ -22,8 +28,14 @@ class CameraViewModel : ViewModel() {
     private val _captureState = MutableStateFlow<CaptureState>(CaptureState.Idle)
     val captureState: StateFlow<CaptureState> = _captureState.asStateFlow()
 
+    private val _cameraAvailability = MutableStateFlow<CameraAvailability>(CameraAvailability.Initializing)
+    val cameraAvailability: StateFlow<CameraAvailability> = _cameraAvailability.asStateFlow()
+
     fun onPermissionResult(isGranted: Boolean) {
         _isCameraPermissionGranted.value = isGranted
+        if (isGranted) {
+            _cameraAvailability.value = CameraAvailability.Initializing
+        }
     }
 
     fun onCaptureStarted(feedback: com.srihari.vintix.rendering.FeedbackBehavior) {
@@ -36,6 +48,14 @@ class CameraViewModel : ViewModel() {
 
     fun onCaptureError(message: String) {
         _captureState.value = CaptureState.Error(message)
+    }
+
+    fun onCameraReady() {
+        _cameraAvailability.value = CameraAvailability.Ready
+    }
+
+    fun onCameraError(message: String) {
+        _cameraAvailability.value = CameraAvailability.Error(message)
     }
 
     fun resetCaptureState() {

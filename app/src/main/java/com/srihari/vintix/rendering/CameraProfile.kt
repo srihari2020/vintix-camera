@@ -133,26 +133,34 @@ data class CameraProfile(
     companion object {
         /** Default tuning preserved from the original hardcoded shader. */
         val Default = CameraProfile(
-            jpegQuality = 88,
+            vignetteIntensity = 0.09f,
+            halationStrength = 0.72f,
+            warmth = 0.86f,
+            desaturation = 0.94f,
+            ccdClarity = 0.86f,
+            sensorNoise = 0.82f,
+            chromaticAberration = 0.72f,
+            lensSoftness = 0.74f,
+            jpegQuality = 90,
             aspectRatio = AspectRatio.RATIO_4_3,
             exportResolution = 1600, // ~2MP authentic early digital res
             flashBehavior = FlashBehavior(
-                centerExposureBoost = 0.25f,
-                warmBloom = 0.3f,
-                highlightClipping = 0.6f,
-                contrastFlattening = 0.15f,
-                extraHalation = 1.2f
+                centerExposureBoost = 0.2f,
+                warmBloom = 0.16f,
+                highlightClipping = 0.42f,
+                contrastFlattening = 0.2f,
+                extraHalation = 1.08f
             ),
             instabilityBehavior = InstabilityBehavior(
-                exposureVariance = 0.03f,
-                warmthVariance = 0.05f,
-                noiseVariance = 0.1f
+                exposureVariance = 0.025f,
+                warmthVariance = 0.035f,
+                noiseVariance = 0.08f
             ),
             feedbackBehavior = FeedbackBehavior(
                 useDigitalBeep = true,
                 hapticFeedback = true,
-                captureFreezeMs = 150L,
-                flashFadeDurationMs = 0
+                captureFreezeMs = 120L,
+                flashFadeDurationMs = 90
             )
         )
     }
@@ -182,17 +190,17 @@ object CameraProfiles {
         aspectRatio = AspectRatio.RATIO_4_3,
         exportResolution = 1600,
         flashBehavior = FlashBehavior(
-            centerExposureBoost = 0.15f,
-            warmBloom = 0.1f,
-            highlightClipping = 0.3f,
-            contrastFlattening = 0.05f,
-            extraHalation = 1.1f
+            centerExposureBoost = 0.12f,
+            warmBloom = 0.06f,
+            highlightClipping = 0.18f,
+            contrastFlattening = 0.06f,
+            extraHalation = 1.04f
         ),
         feedbackBehavior = FeedbackBehavior(
             useDigitalBeep = false,
             hapticFeedback = false,
             captureFreezeMs = 50L,
-            flashFadeDurationMs = 0
+            flashFadeDurationMs = 60
         )
     )
 
@@ -200,28 +208,28 @@ object CameraProfiles {
      * High contrast, cooler tone, sharp, heavy noise.
      */
     val CyberShot2003 = CameraProfile(
-        vignetteIntensity = 0.15f,
-        halationStrength = 1.2f,
-        warmth = 0.7f,
-        desaturation = 0.9f,
-        ccdClarity = 1.5f,
-        sensorNoise = 1.8f,
-        chromaticAberration = 0.8f,
-        lensSoftness = 0.6f,
-        jpegQuality = 82,
+        vignetteIntensity = 0.11f,
+        halationStrength = 0.65f,
+        warmth = 0.58f,
+        desaturation = 0.92f,
+        ccdClarity = 1.25f,
+        sensorNoise = 1.3f,
+        chromaticAberration = 0.68f,
+        lensSoftness = 0.52f,
+        jpegQuality = 84,
         aspectRatio = AspectRatio.RATIO_4_3,
         exportResolution = 1280, // ~1.2MP chunkier file
         flashBehavior = FlashBehavior(
-            centerExposureBoost = 0.4f,
-            warmBloom = 0.1f,
-            highlightClipping = 0.9f,
-            contrastFlattening = 0.3f,
-            extraHalation = 1.8f
+            centerExposureBoost = 0.32f,
+            warmBloom = 0.08f,
+            highlightClipping = 0.72f,
+            contrastFlattening = 0.24f,
+            extraHalation = 1.22f
         ),
         instabilityBehavior = InstabilityBehavior(
-            exposureVariance = 0.08f,
-            warmthVariance = 0.1f,
-            noiseVariance = 0.3f
+            exposureVariance = 0.055f,
+            warmthVariance = 0.07f,
+            noiseVariance = 0.22f
         ),
         feedbackBehavior = FeedbackBehavior(
             useDigitalBeep = true,
@@ -235,40 +243,40 @@ object CameraProfiles {
      * Heavy vignette, strong chromatic aberration, soft lens, warm, high desaturation.
      */
     val DisposableFilm = CameraProfile(
-        vignetteIntensity = 0.35f,
-        halationStrength = 0.8f,
-        warmth = 1.4f,
-        desaturation = 0.75f,
-        ccdClarity = 0.4f,
-        sensorNoise = 1.2f,
-        chromaticAberration = 2.5f,
-        lensSoftness = 1.8f,
-        jpegQuality = 70,
+        vignetteIntensity = 0.22f,
+        halationStrength = 0.78f,
+        warmth = 1.14f,
+        desaturation = 0.82f,
+        ccdClarity = 0.35f,
+        sensorNoise = 0.92f,
+        chromaticAberration = 1.25f,
+        lensSoftness = 1.22f,
+        jpegQuality = 82,
         aspectRatio = AspectRatio.RATIO_3_2,
         exportResolution = null, // Max resolution, mimicking film
         flashBehavior = FlashBehavior(
-            centerExposureBoost = 0.5f,
-            warmBloom = 0.8f,
-            highlightClipping = 0.4f,
-            contrastFlattening = 0.1f,
-            extraHalation = 1.5f
+            centerExposureBoost = 0.36f,
+            warmBloom = 0.36f,
+            highlightClipping = 0.26f,
+            contrastFlattening = 0.16f,
+            extraHalation = 1.18f
         ),
         lightLeakBehavior = LightLeakBehavior(
-            probability = 0.40f,
-            maxIntensity = 0.85f
+            probability = 0.18f,
+            maxIntensity = 0.38f
         ),
         instabilityBehavior = InstabilityBehavior(
-            exposureVariance = 0.15f,
-            warmthVariance = 0.25f,
-            vignetteVariance = 0.1f,
-            halationVariance = 0.3f,
-            noiseVariance = 0.2f
+            exposureVariance = 0.09f,
+            warmthVariance = 0.12f,
+            vignetteVariance = 0.055f,
+            halationVariance = 0.14f,
+            noiseVariance = 0.12f
         ),
         feedbackBehavior = FeedbackBehavior(
             useDigitalBeep = false,
             hapticFeedback = true,
-            captureFreezeMs = 50L,
-            flashFadeDurationMs = 800
+            captureFreezeMs = 90L,
+            flashFadeDurationMs = 520
         )
     )
 }

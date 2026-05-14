@@ -12,9 +12,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -23,8 +25,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import coil.request.CachePolicy
+import coil.request.ImageRequest
+import coil.size.Precision
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.absoluteValue
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
@@ -76,10 +82,30 @@ fun GalleryScreen(
             modifier = Modifier.fillMaxSize()
         ) { page ->
             val photo = photos[page]
+            val pageOffset = (
+                (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
+            ).absoluteValue.coerceIn(0f, 1f)
+            val imageRequest = remember(photo.uri) {
+                ImageRequest.Builder(context)
+                    .data(photo.uri)
+                    .crossfade(false)
+                    .allowHardware(true)
+                    .memoryCachePolicy(CachePolicy.ENABLED)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .precision(Precision.INEXACT)
+                    .build()
+            }
             AsyncImage(
-                model = photo.uri,
+                model = imageRequest,
                 contentDescription = "Photo taken with ${photo.profileName}",
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        alpha = 1f - pageOffset * 0.18f
+                        val scale = 0.985f + (1f - pageOffset) * 0.015f
+                        scaleX = scale
+                        scaleY = scale
+                    },
                 contentScale = ContentScale.Fit
             )
         }

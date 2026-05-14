@@ -32,15 +32,13 @@ precision mediump float;
                 dirN = (len > 1e-4) ? (d / len) : vec2(0.0);
             }
 
-            vec4 vnx_lens_edge_capture(VKX_SAMPLER tex, vec2 uv) {
-                float r;
-                vec2 dir;
-                vnx_uv_radial(uv, r, dir);
+            vec4 vnx_lens_edge_capture(VKX_SAMPLER tex, vec2 uv, float r, vec2 dir, out vec3 centerRgb) {
                 float edge = smoothstep(0.24, 0.92, r);
                 float ca = 0.00072 * edge * uChromaticAberration;
                 vec2 uvR = uv + dir * ca;
                 vec2 uvB = uv - dir * ca * 0.9;
                 vec4 ctr = texture2D(tex, uv);
+                centerRgb = ctr.rgb;
                 float rChan = texture2D(tex, uvR).r;
                 float bChan = texture2D(tex, uvB).b;
                 vec3 sharp = vec3(rChan, ctr.g, bChan);
@@ -51,29 +49,23 @@ precision mediump float;
                 return vec4(rgb, ctr.a);
             }
 
-            vec3 vnx_radial_vignette(vec3 c, vec2 uv) {
-                float r;
-                vec2 dir;
-                vnx_uv_radial(uv, r, dir);
+            vec3 vnx_radial_vignette(vec3 c, float r) {
                 float vig = 1.0 - uVignetteIntensity * smoothstep(0.18, 0.95, r);
                 return c * vig;
             }
 
-            vec3 vnx_retro_highlight_rolloff(vec3 c) {
-                float y = vnx_luma709(c);
+            vec3 vnx_retro_highlight_rolloff(vec3 c, float y) {
                 float yc = y / (1.0 + 0.26 * y);
                 float s = (y > 1e-4) ? (yc / y) : 1.0;
                 return c * s;
             }
 
-            vec3 vnx_lift_blacks(vec3 c) {
-                float y = vnx_luma709(c);
+            vec3 vnx_lift_blacks(vec3 c, float y) {
                 float w = 1.0 - smoothstep(0.0, 0.4, y);
                 return c + 0.013 * w;
             }
 
-            vec3 vnx_warm_highlight_rolloff(vec3 c) {
-                float y = vnx_luma709(c);
+            vec3 vnx_warm_highlight_rolloff(vec3 c, float y) {
                 float t = smoothstep(0.34, 0.86, y);
                 vec3 warm = vec3(1.016, 1.003, 0.994);
                 return mix(c, c * warm, t * 0.18 * clamp(uWarmth, 0.0, 2.0));
@@ -88,8 +80,7 @@ precision mediump float;
                 return m * c;
             }
 
-            vec3 vnx_mild_desaturate(vec3 c, float sat) {
-                float y = vnx_luma709(c);
+            vec3 vnx_mild_desaturate(vec3 c, float y, float sat) {
                 return mix(vec3(y), c, sat);
             }
 
@@ -107,6 +98,7 @@ precision mediump float;
             }
 
             vec3 vnx_pseudo_halation(VKX_SAMPLER tex, vec2 uv) {
+                if (uHalationStrength <= 0.001) return vec3(0.0);
                 vec2 du = vec2(0.00158, 0.0);
                 vec2 dv = vec2(0.0, 0.00192);
                 vec3 acc = vnx_halation_neighbor_contrib(tex, uv, du);
@@ -116,14 +108,14 @@ precision mediump float;
                 return acc * (0.064 / 4.0) * uHalationStrength;
             }
 
-            vec3 vnx_ccd_sensor_clarity(VKX_SAMPLER tex, vec2 uv, vec3 graded) {
+            vec3 vnx_ccd_sensor_clarity(VKX_SAMPLER tex, vec2 uv, vec3 rawCenter, vec3 graded) {
+                if (uCcdClarity <= 0.001) return graded;
                 vec2 du = vec2(0.0009, 0.0);
                 vec2 dv = vec2(0.0, 0.00093);
                 vec3 avg = texture2D(tex, uv + du).rgb + texture2D(tex, uv - du).rgb
                          + texture2D(tex, uv + dv).rgb + texture2D(tex, uv - dv).rgb;
                 avg *= 0.25;
-                vec3 rawC = texture2D(tex, uv).rgb;
-                float d = vnx_luma709(rawC - avg);
+                float d = vnx_luma709(rawCenter - avg);
                 d = clamp(d, -0.042, 0.042);
                 float edge = smoothstep(0.006, 0.11, abs(d));
                 float gain = 0.31 * (0.58 + 0.42 * edge) * uCcdClarity;
@@ -147,6 +139,7 @@ precision mediump float;
             }
 
             vec3 vnx_ccd_sensor_noise(vec3 c, float phase) {
+                if (uSensorNoise <= 0.001) return c;
                 vec2 fc = gl_FragCoord.xy * 0.68;
                 vec3 h0 = vec3(fc, phase * 311.7);
                 float nL = vnx_hash13(h0) - 0.5;
@@ -206,15 +199,17 @@ precision mediump float;
             }
 
             vec4 vnx_retro_color_pipeline(VKX_SAMPLER tex, vec2 uv) {
-                vec4 lc = vnx_lens_edge_capture(tex, uv);
+                float r;
+                vec2 dir;
+                vnx_uv_radial(uv, r, dir);
+                vec3 rawCenter;
+                vec4 lc = vnx_lens_edge_capture(tex, uv, r, dir, rawCenter);
                 vec3 c = lc.rgb;
                 
                 c *= uExposureMultiplier;
                 
                 // FLASH PASS 1: Center exposure boost & contrast flattening
                 if (uFlashCenterBoost > 0.0) {
-                    float r; vec2 dir;
-                    vnx_uv_radial(uv, r, dir);
                     float flashFalloff = 1.0 - smoothstep(0.0, 1.2, r);
                     
                     c += c * flashFalloff * uFlashCenterBoost;
@@ -229,11 +224,15 @@ precision mediump float;
                     c = min(c, vec3(clipThresh)) / clipThresh;
                 }
                 
-                c = vnx_retro_highlight_rolloff(c);
-                c = vnx_lift_blacks(c);
-                c = vnx_warm_highlight_rolloff(c);
+                float y = vnx_luma709(c);
+                c = vnx_retro_highlight_rolloff(c, y);
+                y = vnx_luma709(c);
+                c = vnx_lift_blacks(c, y);
+                y = vnx_luma709(c);
+                c = vnx_warm_highlight_rolloff(c, y);
                 c = vnx_vintage_color_shift(c);
-                c = vnx_mild_desaturate(c, clamp(uDesaturation, 0.0, 1.0));
+                y = vnx_luma709(c);
+                c = vnx_mild_desaturate(c, y, clamp(uDesaturation, 0.0, 1.0));
                 c = clamp(c, 0.0, 1.0);
                 vec3 halo = vnx_pseudo_halation(tex, uv);
                 float yb = vnx_luma709(c);
@@ -243,10 +242,10 @@ precision mediump float;
                 // PROCEDURAL LIGHT LEAK
                 c = vnx_apply_light_leak(c, uv);
                 
-                c = clamp(vnx_ccd_sensor_clarity(tex, uv, c), 0.0, 1.0);
+                c = clamp(vnx_ccd_sensor_clarity(tex, uv, rawCenter, c), 0.0, 1.0);
                 c = clamp(vnx_ccd_micro_contrast(c), 0.0, 1.0);
                 c = clamp(vnx_ccd_sensor_noise(c, uNoisePhase), 0.0, 1.0);
-                c = vnx_radial_vignette(c, uv);
+                c = vnx_radial_vignette(c, r);
                 return vec4(clamp(c, 0.0, 1.0), lc.a);
             }
 

@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -54,16 +55,46 @@ fun CameraScreen(
     val context = LocalContext.current
     val isCameraPermissionGranted by viewModel.isCameraPermissionGranted.collectAsState()
     val captureState by viewModel.captureState.collectAsState()
+    val cameraAvailability by viewModel.cameraAvailability.collectAsState()
     val appSettings by settingsViewModel.settings.collectAsState()
 
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
     var glViewRef by remember { mutableStateOf<VintixGLSurfaceView?>(null) }
     val photoCaptureManager = remember { PhotoCaptureManager(context) }
+    val toneGenerator = remember {
+        android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 90)
+    }
+    val shutterSound = remember {
+        android.media.MediaActionSound().apply {
+            load(android.media.MediaActionSound.SHUTTER_CLICK)
+        }
+    }
 
+    DisposableEffect(Unit) {
+        onDispose {
+            toneGenerator.release()
+            shutterSound.release()
+            photoCaptureManager.shutdown()
+        }
+    }
+
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { }
     val permissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { isGranted ->
         viewModel.onPermissionResult(isGranted)
+        if (
+            isGranted &&
+            android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
+            ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.WRITE_EXTERNAL_STORAGE
+            ) != PackageManager.PERMISSION_GRANTED
+        ) {
+            storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        }
     }
 
     val profiles = mapOf(
@@ -83,6 +114,15 @@ fun CameraScreen(
             ) == PackageManager.PERMISSION_GRANTED
         ) {
             viewModel.onPermissionResult(true)
+            if (
+                android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
+                ContextCompat.checkSelfPermission(
+                    context,
+                    Manifest.permission.WRITE_EXTERNAL_STORAGE
+                ) != PackageManager.PERMISSION_GRANTED
+            ) {
+                storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            }
         } else {
             permissionLauncher.launch(Manifest.permission.CAMERA)
         }
@@ -100,8 +140,12 @@ fun CameraScreen(
                         cameraProfile = currentProfile,
                         onCameraReady = { manager ->
                             cameraManager = manager
+                            viewModel.onCameraReady()
                         },
-                        onGlViewReady = { glViewRef = it }
+                        onGlViewReady = { glViewRef = it },
+                        onCameraError = { throwable ->
+                            viewModel.onCameraError(throwable.message ?: "Camera unavailable")
+                        }
                     )
 
                     val capturingState = captureState as? CaptureState.Capturing
@@ -115,8 +159,31 @@ fun CameraScreen(
                 }
             }
 
-            if (BuildConfig.DEBUG) {
+            if (BuildConfig.TELEMETRY_ENABLED) {
                 TelemetryOverlay(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding())
+            }
+
+            when (val availability = cameraAvailability) {
+                CameraAvailability.Initializing -> CameraStatusOverlay(
+                    text = "WAKING CAMERA",
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                is CameraAvailability.Error -> CameraStatusOverlay(
+                    text = availability.message,
+                    modifier = Modifier.align(Alignment.Center)
+                )
+                CameraAvailability.Ready -> Unit
+            }
+
+            val captureError = captureState as? CaptureState.Error
+            if (captureError != null) {
+                CameraStatusOverlay(
+                    text = captureError.message,
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .statusBarsPadding()
+                        .padding(top = 24.dp)
+                )
             }
 
             ProfileSelector(
@@ -136,6 +203,21 @@ fun CameraScreen(
             ShutterButton(
                 onClick = {
                     val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
+                    if (
+                        android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.WRITE_EXTERNAL_STORAGE
+                        ) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        viewModel.onCaptureError("Storage permission required to save photos")
+                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        coroutineScope.launch {
+                            kotlinx.coroutines.delay(2200)
+                            viewModel.resetCaptureState()
+                        }
+                        return@ShutterButton
+                    }
                     val feedback = currentProfile.feedbackBehavior
 
                     if (feedback.hapticFeedback) {
@@ -143,10 +225,9 @@ fun CameraScreen(
                     }
                     if (feedback.soundEnabled) {
                         if (feedback.useDigitalBeep) {
-                            android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 100)
-                                .startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 50)
+                            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 42)
                         } else {
-                            android.media.MediaActionSound().play(android.media.MediaActionSound.SHUTTER_CLICK)
+                            shutterSound.play(android.media.MediaActionSound.SHUTTER_CLICK)
                         }
                     }
 
@@ -178,12 +259,16 @@ fun CameraScreen(
                             viewModel.onCaptureError(
                                 exception.message ?: "Unknown capture error"
                             )
-                            viewModel.resetCaptureState()
+                            coroutineScope.launch {
+                                kotlinx.coroutines.delay(2200)
+                                viewModel.resetCaptureState()
+                            }
                         }
                     )
                 },
                 enabled = cameraManager?.imageCapture != null &&
-                    captureState !is CaptureState.Capturing,
+                    captureState !is CaptureState.Capturing &&
+                    cameraAvailability is CameraAvailability.Ready,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
@@ -222,12 +307,44 @@ fun CameraScreen(
                 )
             }
         } else {
-            Text(
-                text = "Camera permission required",
-                modifier = Modifier.align(Alignment.Center)
-            )
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Camera permission required",
+                    color = Color.White,
+                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                    fontSize = 14.sp
+                )
+                androidx.compose.material3.TextButton(
+                    onClick = { permissionLauncher.launch(Manifest.permission.CAMERA) }
+                ) {
+                    Text(
+                        text = "ALLOW CAMERA",
+                        color = Color.White,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
+            }
         }
     }
+}
+
+@Composable
+private fun CameraStatusOverlay(text: String, modifier: Modifier = Modifier) {
+    Text(
+        text = text.uppercase(),
+        color = Color.White,
+        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+        fontSize = 12.sp,
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.62f))
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    )
 }
 
 @Composable

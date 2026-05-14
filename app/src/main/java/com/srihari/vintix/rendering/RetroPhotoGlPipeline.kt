@@ -32,6 +32,13 @@ class RetroPhotoGlPipeline private constructor() {
     private val quad = TexturedQuad()
 
     private var initialized = false
+    private var inputTextureId: Int = 0
+    private var outputTextureId: Int = 0
+    private var frameBufferId: Int = 0
+    private var outputWidth: Int = 0
+    private var outputHeight: Int = 0
+    private var readBuffer: ByteBuffer? = null
+    private var pixelBuffer = IntArray(0)
 
     fun process(
         source: Bitmap, 
@@ -45,71 +52,34 @@ class RetroPhotoGlPipeline private constructor() {
         val h0 = source.height
         if (w0 <= 0 || h0 <= 0) throw IllegalArgumentException("Invalid bitmap size")
 
-            ensureEglAndProgram()
-            GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
-            GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
+        ensureEglAndProgram()
+        GLES20.glPixelStorei(GLES20.GL_PACK_ALIGNMENT, 1)
+        GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1)
 
-            val maxSize = IntArray(1)
-            GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, maxSize, 0)
-            val maxTex = maxSize[0].coerceAtLeast(1024)
+        val maxSize = IntArray(1)
+        GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, maxSize, 0)
+        val maxTex = maxSize[0].coerceAtLeast(1024)
 
-            val working = if (w0 > maxTex || h0 > maxTex) {
-                val scale = (maxTex.toFloat() / w0).coerceAtMost(maxTex.toFloat() / h0)
-                val nw = (w0 * scale).toInt().coerceAtLeast(1)
-                val nh = (h0 * scale).toInt().coerceAtLeast(1)
-                Log.w(TAG, "Bitmap ${w0}x$h0 exceeds GL_MAX_TEXTURE_SIZE=$maxTex; scaling to ${nw}x$nh")
-                Bitmap.createScaledBitmap(source, nw, nh, true)
-            } else {
-                source
-            }
+        val working = if (w0 > maxTex || h0 > maxTex) {
+            val scale = (maxTex.toFloat() / w0).coerceAtMost(maxTex.toFloat() / h0)
+            val nw = (w0 * scale).toInt().coerceAtLeast(1)
+            val nh = (h0 * scale).toInt().coerceAtLeast(1)
+            Log.w(TAG, "Bitmap ${w0}x$h0 exceeds GL_MAX_TEXTURE_SIZE=$maxTex; scaling to ${nw}x$nh")
+            Bitmap.createScaledBitmap(source, nw, nh, true)
+        } else {
+            source
+        }
 
+        try {
             val w = working.width
             val h = working.height
 
-            val inputTex = genTexture()
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTex)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            ensureInputTexture()
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTextureId)
             GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, working, 0)
-            if (working !== source) working.recycle()
 
-            val colorTex = genTexture()
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, colorTex)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexImage2D(
-                GLES20.GL_TEXTURE_2D,
-                0,
-                GLES20.GL_RGBA,
-                w,
-                h,
-                0,
-                GLES20.GL_RGBA,
-                GLES20.GL_UNSIGNED_BYTE,
-                null
-            )
-
-            val fbo = IntArray(1)
-            GLES20.glGenFramebuffers(1, fbo, 0)
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0])
-            GLES20.glFramebufferTexture2D(
-                GLES20.GL_FRAMEBUFFER,
-                GLES20.GL_COLOR_ATTACHMENT0,
-                GLES20.GL_TEXTURE_2D,
-                colorTex,
-                0
-            )
-            val status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)
-            if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-                GLES20.glDeleteFramebuffers(1, fbo, 0)
-                GLES20.glDeleteTextures(2, intArrayOf(inputTex, colorTex), 0)
-                throw IllegalStateException("Framebuffer incomplete: $status")
-            }
+            ensureOutputTarget(w, h)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, frameBufferId)
 
             GLES20.glViewport(0, 0, w, h)
             GLES20.glDisable(GLES20.GL_BLEND)
@@ -121,40 +91,35 @@ class RetroPhotoGlPipeline private constructor() {
             profileUniforms!!.upload(profile, noisePhase, true, leakIntensity, leakOriginX, leakOriginY)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTex)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTextureId)
             if (uTextureLoc >= 0) GLES20.glUniform1i(uTextureLoc, 0)
 
             quad.draw(program)
 
             GLES20.glFinish()
 
-            val rowBytes = w * 4
-            val buf = ByteBuffer.allocateDirect(rowBytes * h).order(ByteOrder.nativeOrder())
+            val buf = ensureReadBuffer(w, h)
             GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
-            flipRgbaBufferVertically(buf, w, h)
-
-            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
-            GLES20.glDeleteFramebuffers(1, fbo, 0)
-            GLES20.glDeleteTextures(2, intArrayOf(inputTex, colorTex), 0)
 
             val out = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-            buf.rewind()
-            val px = IntArray(w * h)
-            var i = 0
-            val lim = w * h
-            while (i < lim) {
-                val r = buf.get().toInt() and 0xFF
-                val g = buf.get().toInt() and 0xFF
-                val b = buf.get().toInt() and 0xFF
-                val a = buf.get().toInt() and 0xFF
-                px[i] = (a shl 24) or (r shl 16) or (g shl 8) or b
-                i++
-            }
-            out.setPixels(px, 0, w, 0, 0, w, h)
+            copyReadBufferToBitmap(buf, w, h, out)
             return out
+        } finally {
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
+            if (working !== source && !working.isRecycled) working.recycle()
+        }
     }
 
     fun release() {
+        if (eglDisplay != EGL14.EGL_NO_DISPLAY &&
+            eglSurface != EGL14.EGL_NO_SURFACE &&
+            eglContext != EGL14.EGL_NO_CONTEXT
+        ) {
+            EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+        }
+        releaseOutputTarget()
+        releaseInputTexture()
         shaderProgram?.release()
         shaderProgram = null
         profileUniforms = null
@@ -164,7 +129,15 @@ class RetroPhotoGlPipeline private constructor() {
     }
 
     private fun ensureEglAndProgram() {
-        if (initialized) return
+        if (initialized) {
+            if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
+                return
+            }
+            Log.w(TAG, "Lost EGL current context; rebuilding export pipeline")
+            forgetGlObjects()
+            destroyEgl()
+            initialized = false
+        }
 
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
         if (eglDisplay == EGL14.EGL_NO_DISPLAY) {
@@ -223,6 +196,133 @@ class RetroPhotoGlPipeline private constructor() {
         uTextureLoc = sp.getUniformLocation("uTexture")
 
         initialized = true
+    }
+
+    private fun ensureInputTexture() {
+        if (inputTextureId != 0) return
+        inputTextureId = genTexture()
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTextureId)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+    }
+
+    private fun ensureOutputTarget(width: Int, height: Int) {
+        if (
+            outputTextureId != 0 &&
+            frameBufferId != 0 &&
+            outputWidth == width &&
+            outputHeight == height
+        ) {
+            return
+        }
+
+        releaseOutputTarget()
+
+        outputTextureId = genTexture()
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outputTextureId)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+        GLES20.glTexImage2D(
+            GLES20.GL_TEXTURE_2D,
+            0,
+            GLES20.GL_RGBA,
+            width,
+            height,
+            0,
+            GLES20.GL_RGBA,
+            GLES20.GL_UNSIGNED_BYTE,
+            null
+        )
+
+        val fbo = IntArray(1)
+        GLES20.glGenFramebuffers(1, fbo, 0)
+        frameBufferId = fbo[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, frameBufferId)
+        GLES20.glFramebufferTexture2D(
+            GLES20.GL_FRAMEBUFFER,
+            GLES20.GL_COLOR_ATTACHMENT0,
+            GLES20.GL_TEXTURE_2D,
+            outputTextureId,
+            0
+        )
+        val status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)
+        if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
+            releaseOutputTarget()
+            throw IllegalStateException("Framebuffer incomplete: $status")
+        }
+
+        outputWidth = width
+        outputHeight = height
+    }
+
+    private fun ensureReadBuffer(width: Int, height: Int): ByteBuffer {
+        val requiredBytes = width * height * 4
+        val buffer = readBuffer
+        if (buffer == null || buffer.capacity() < requiredBytes) {
+            readBuffer = ByteBuffer.allocateDirect(requiredBytes).order(ByteOrder.nativeOrder())
+        }
+        return readBuffer!!.apply {
+            clear()
+            limit(requiredBytes)
+        }
+    }
+
+    private fun copyReadBufferToBitmap(buffer: ByteBuffer, width: Int, height: Int, output: Bitmap) {
+        val requiredPixels = width * height
+        if (pixelBuffer.size < requiredPixels) {
+            pixelBuffer = IntArray(requiredPixels)
+        }
+
+        val rowBytes = width * 4
+        var target = 0
+        for (y in 0 until height) {
+            var source = (height - 1 - y) * rowBytes
+            for (x in 0 until width) {
+                val r = buffer.get(source).toInt() and 0xFF
+                val g = buffer.get(source + 1).toInt() and 0xFF
+                val b = buffer.get(source + 2).toInt() and 0xFF
+                val a = buffer.get(source + 3).toInt() and 0xFF
+                pixelBuffer[target] = (a shl 24) or (r shl 16) or (g shl 8) or b
+                target++
+                source += 4
+            }
+        }
+        output.setPixels(pixelBuffer, 0, width, 0, 0, width, height)
+    }
+
+    private fun releaseInputTexture() {
+        if (inputTextureId != 0) {
+            GLES20.glDeleteTextures(1, intArrayOf(inputTextureId), 0)
+            inputTextureId = 0
+        }
+    }
+
+    private fun releaseOutputTarget() {
+        if (frameBufferId != 0) {
+            GLES20.glDeleteFramebuffers(1, intArrayOf(frameBufferId), 0)
+            frameBufferId = 0
+        }
+        if (outputTextureId != 0) {
+            GLES20.glDeleteTextures(1, intArrayOf(outputTextureId), 0)
+            outputTextureId = 0
+        }
+        outputWidth = 0
+        outputHeight = 0
+    }
+
+    private fun forgetGlObjects() {
+        shaderProgram = null
+        profileUniforms = null
+        uTextureLoc = -1
+        inputTextureId = 0
+        outputTextureId = 0
+        frameBufferId = 0
+        outputWidth = 0
+        outputHeight = 0
     }
 
     private fun destroyEgl() {
@@ -285,22 +385,4 @@ private fun genTexture(): Int {
     val t = IntArray(1)
     GLES20.glGenTextures(1, t, 0)
     return t[0]
-}
-
-private fun flipRgbaBufferVertically(buf: ByteBuffer, w: Int, h: Int) {
-    val rowBytes = w * 4
-    val tmp = ByteArray(rowBytes)
-    val arr = ByteArray(buf.capacity())
-    buf.rewind()
-    buf.get(arr)
-    for (y in 0 until h / 2) {
-        val top = y * rowBytes
-        val bot = (h - 1 - y) * rowBytes
-        System.arraycopy(arr, top, tmp, 0, rowBytes)
-        System.arraycopy(arr, bot, arr, top, rowBytes)
-        System.arraycopy(tmp, 0, arr, bot, rowBytes)
-    }
-    buf.clear()
-    buf.put(arr)
-    buf.rewind()
 }

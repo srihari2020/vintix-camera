@@ -53,9 +53,9 @@ fun ShutterButton(
                     detectTapGestures(
                         onPress = {
                             isPressed = true
-                            tryAwaitRelease()
+                            val released = tryAwaitRelease()
                             isPressed = false
-                            onClick()
+                            if (released) onClick()
                         }
                     )
                 }

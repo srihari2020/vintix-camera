@@ -8,6 +8,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -18,6 +19,7 @@ import com.srihari.vintix.rendering.CameraProfile
 import com.srihari.vintix.rendering.VintixGLSurfaceView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Jetpack Compose wrapper that bridges CameraX and the OpenGL rendering pipeline.
@@ -42,11 +44,14 @@ fun GLPreview(
     cameraProfile: CameraProfile = CameraProfile.Default,
     onCameraReady: (CameraManager) -> Unit = {},
     onGlViewReady: (VintixGLSurfaceView) -> Unit = {},
+    onCameraError: (Throwable) -> Unit = {},
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    val configuration = LocalConfiguration.current
     val cameraManager = remember { CameraManager(context) }
     val scope = rememberCoroutineScope()
+    val activeSurface = remember { AtomicReference<Surface?>() }
 
     val glSurfaceView = remember {
         VintixGLSurfaceView(context).apply {
@@ -54,8 +59,18 @@ fun GLPreview(
                 // GL thread → main thread: start CameraX with this surface
                 scope.launch(Dispatchers.Main) {
                     val surface = Surface(surfaceTexture)
-                    cameraManager.startCamera(lifecycleOwner, surface)
-                    onCameraReady(cameraManager)
+                    val previousSurface = activeSurface.get()
+                    try {
+                        cameraManager.startCamera(lifecycleOwner, surface)
+                        activeSurface.set(surface)
+                        previousSurface?.release()
+                        onCameraReady(cameraManager)
+                    } catch (e: Exception) {
+                        surface.release()
+                        previousSurface?.release()
+                        activeSurface.set(null)
+                        onCameraError(e)
+                    }
                 }
             }
         }
@@ -72,6 +87,10 @@ fun GLPreview(
         }
     }
 
+    LaunchedEffect(configuration.orientation, configuration.screenWidthDp, configuration.screenHeightDp) {
+        cameraManager.updateTargetRotation()
+    }
+
     // Handle lifecycle pause/resume for the GL surface
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -85,6 +104,8 @@ fun GLPreview(
 
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
+            cameraManager.stopCamera()
+            activeSurface.getAndSet(null)?.release()
         }
     }
 
@@ -93,4 +114,3 @@ fun GLPreview(
         modifier = modifier.fillMaxSize()
     )
 }
-

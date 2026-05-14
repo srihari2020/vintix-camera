@@ -33,7 +33,8 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val projection = arrayOf(
                 MediaStore.Images.Media._ID,
                 MediaStore.Images.Media.DATE_ADDED,
-                MediaStore.Images.Media.RELATIVE_PATH
+                MediaStore.Images.Media.RELATIVE_PATH,
+                MediaStore.Images.Media.TITLE
             )
 
             // Only fetch from our Vintix folder
@@ -50,8 +51,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             )?.use { cursor ->
                 val idColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media._ID)
                 val dateColumn = cursor.getColumnIndexOrThrow(MediaStore.Images.Media.DATE_ADDED)
+                val titleColumn = cursor.getColumnIndex(MediaStore.Images.Media.TITLE)
 
-                while (cursor.moveToNext()) {
+                while (cursor.moveToNext() && photoList.size < MAX_PHOTOS) {
                     val id = cursor.getLong(idColumn)
                     val dateAdded = cursor.getLong(dateColumn) * 1000 // Convert to MS
                     
@@ -60,14 +62,22 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
                         id.toString()
                     )
 
-                    // Lazily extract EXIF model for profile name
+                    // Prefer MediaStore metadata written by new exports; EXIF fallback keeps old shots readable.
                     var profileName = "Unknown"
+                    if (titleColumn >= 0) {
+                        val title = cursor.getString(titleColumn)
+                        if (title != null && title.startsWith("Vintix - ")) {
+                            profileName = title.substringAfter("Vintix - ")
+                        }
+                    }
                     try {
-                        resolver.openInputStream(contentUri)?.use { stream ->
-                            val exif = ExifInterface(stream)
-                            val model = exif.getAttribute(ExifInterface.TAG_MODEL)
-                            if (model != null && model.startsWith("Vintix - ")) {
-                                profileName = model.substringAfter("Vintix - ")
+                        if (profileName == "Unknown") {
+                            resolver.openInputStream(contentUri)?.use { stream ->
+                                val exif = ExifInterface(stream)
+                                val model = exif.getAttribute(ExifInterface.TAG_MODEL)
+                                if (model != null && model.startsWith("Vintix - ")) {
+                                    profileName = model.substringAfter("Vintix - ")
+                                }
                             }
                         }
                     } catch (e: Exception) {
@@ -80,5 +90,9 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
 
             _photos.value = photoList
         }
+    }
+
+    private companion object {
+        private const val MAX_PHOTOS = 500
     }
 }

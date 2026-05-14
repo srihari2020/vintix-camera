@@ -59,6 +59,10 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private var texMatrixUniformLocation: Int = 0
     private var profileUniforms: CameraProfileUniformHandles? = null
     private var noisePhase: Float = 0f
+    private var rendererReady: Boolean = false
+    private var surfaceWidth: Int = 0
+    private var surfaceHeight: Int = 0
+    private val frameGovernor = PreviewFrameGovernor()
 
     /**
      * Latest noise phase used for preview (for aligning still export grain with live view).
@@ -91,6 +95,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
         Log.d(TAG, "Surface created — initializing camera pipeline")
 
         GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
+        rendererReady = false
+        surfaceTexture?.release()
+        surfaceTexture = null
 
         // Initialize identity matrix as default
         Matrix.setIdentityM(texTransformMatrix, 0)
@@ -102,11 +109,13 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
         if (vertexShader == 0 || fragmentShader == 0) {
             Log.e(TAG, "Shader compilation failed")
+            shaderProgram.release()
             return
         }
 
         if (!shaderProgram.link(vertexShader, fragmentShader)) {
             Log.e(TAG, "Shader program linking failed")
+            shaderProgram.release()
             return
         }
 
@@ -122,6 +131,11 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
         // Create SurfaceTexture bound to the OES texture
         surfaceTexture = SurfaceTexture(oesTextureId)
+        if (surfaceWidth > 0 && surfaceHeight > 0) {
+            surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
+        }
+        rendererReady = true
+        frameGovernor.reset()
 
         Log.d(TAG, "Camera pipeline initialized — program=${shaderProgram.programId}, oesTexture=$oesTextureId")
 
@@ -133,6 +147,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         Log.d(TAG, "Surface changed: ${width}x${height}")
+        surfaceWidth = width
+        surfaceHeight = height
         GLES20.glViewport(0, 0, width, height)
 
         // Update the SurfaceTexture default buffer size to match the viewport
@@ -146,14 +162,22 @@ class VintixRenderer : GLSurfaceView.Renderer {
     var freezePreview: Boolean = false
 
     override fun onDrawFrame(gl: GL10?) {
+        frameGovernor.awaitNextFrame()
         val startNs = System.nanoTime()
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        if (!rendererReady) return
 
         // Pull the latest camera frame into the OES texture
         surfaceTexture?.let { st ->
             if (!freezePreview) {
-                st.updateTexImage()
-                st.getTransformMatrix(texTransformMatrix)
+                try {
+                    st.updateTexImage()
+                    st.getTransformMatrix(texTransformMatrix)
+                } catch (e: RuntimeException) {
+                    Log.w(TAG, "SurfaceTexture update failed; rebuilding camera surface", e)
+                    recoverSurfaceTexture()
+                    return
+                }
             }
         }
 
@@ -205,6 +229,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
      * Call when the GL surface is being destroyed.
      */
     fun release() {
+        rendererReady = false
         surfaceTexture?.release()
         surfaceTexture = null
         if (::shaderProgram.isInitialized) shaderProgram.release()
@@ -213,5 +238,48 @@ class VintixRenderer : GLSurfaceView.Renderer {
             GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
             oesTextureId = 0
         }
+    }
+
+    private fun recoverSurfaceTexture() {
+        rendererReady = false
+        surfaceTexture?.release()
+        surfaceTexture = null
+        if (oesTextureId != 0) {
+            GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
+        }
+        oesTextureId = createOESTexture()
+        surfaceTexture = SurfaceTexture(oesTextureId)
+        if (surfaceWidth > 0 && surfaceHeight > 0) {
+            surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
+        }
+        Matrix.setIdentityM(texTransformMatrix, 0)
+        rendererReady = true
+        surfaceTexture?.let { onSurfaceTextureAvailable?.invoke(it) }
+    }
+}
+
+private class PreviewFrameGovernor(
+    private val targetFrameNs: Long = 16_666_667L
+) {
+    private var lastFrameNs: Long = 0L
+
+    fun awaitNextFrame() {
+        val previous = lastFrameNs
+        if (previous != 0L) {
+            val elapsed = System.nanoTime() - previous
+            val remaining = targetFrameNs - elapsed
+            if (remaining > 1_000_000L) {
+                try {
+                    Thread.sleep(remaining / 1_000_000L, (remaining % 1_000_000L).toInt())
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+        }
+        lastFrameNs = System.nanoTime()
+    }
+
+    fun reset() {
+        lastFrameNs = 0L
     }
 }

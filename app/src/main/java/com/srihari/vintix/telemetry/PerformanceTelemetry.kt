@@ -27,7 +27,7 @@ object PerformanceTelemetry {
     private var lastFpsTimeNs = 0L
 
     fun recordFrame(durationNs: Long) {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.TELEMETRY_ENABLED) return
         
         val nowNs = System.nanoTime()
         if (lastFpsTimeNs == 0L) lastFpsTimeNs = nowNs
@@ -46,17 +46,17 @@ object PerformanceTelemetry {
     }
 
     fun recordExport(durationNs: Long) {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.TELEMETRY_ENABLED) return
         _exportTimeMs.value = TimeUnit.NANOSECONDS.toMillis(durationNs)
     }
 
     fun recordProcessing(durationNs: Long) {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.TELEMETRY_ENABLED) return
         _processingTimeMs.value = TimeUnit.NANOSECONDS.toMillis(durationNs)
     }
 
     fun updateMemory() {
-        if (!BuildConfig.DEBUG) return
+        if (!BuildConfig.TELEMETRY_ENABLED) return
         val runtime = Runtime.getRuntime()
         val usedMemBytes = runtime.totalMemory() - runtime.freeMemory()
         _memoryUsageMb.value = usedMemBytes / (1024 * 1024)

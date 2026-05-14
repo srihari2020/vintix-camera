@@ -154,7 +154,8 @@ private fun ToggleSetting(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = 52.dp),
+            .heightIn(min = 54.dp)
+            .clickable { onCheckedChange(!checked) },
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(

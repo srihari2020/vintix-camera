@@ -1,6 +1,11 @@
 package com.srihari.vintix.camera
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
+import android.os.Build
+import android.os.Looper
+import android.util.Log
 import android.view.Surface
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ImageCapture
@@ -21,6 +26,9 @@ import kotlin.coroutines.resume
  */
 class CameraManager(private val context: Context) {
 
+    private var cameraProvider: ProcessCameraProvider? = null
+    private var previewUseCase: Preview? = null
+
     /** Exposed for capture callers. Only available after [startCamera] completes. */
     var imageCapture: ImageCapture? = null
         private set
@@ -34,8 +42,10 @@ class CameraManager(private val context: Context) {
         surfaceProvider: Preview.SurfaceProvider
     ) {
         val cameraProvider = getCameraProvider()
+        val rotation = targetRotation()
 
         val preview = Preview.Builder()
+            .setTargetRotation(rotation)
             .build()
             .also {
                 it.surfaceProvider = surfaceProvider
@@ -43,8 +53,8 @@ class CameraManager(private val context: Context) {
 
         val imageCaptureUseCase = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetRotation(rotation)
             .build()
-        imageCapture = imageCaptureUseCase
 
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
@@ -57,8 +67,13 @@ class CameraManager(private val context: Context) {
                     preview,
                     imageCaptureUseCase
                 )
+                previewUseCase = preview
+                imageCapture = imageCaptureUseCase
             } catch (e: Exception) {
-                e.printStackTrace()
+                previewUseCase = null
+                imageCapture = null
+                Log.e(TAG, "Camera binding failed", e)
+                throw e
             }
         }
     }
@@ -75,8 +90,10 @@ class CameraManager(private val context: Context) {
         surface: Surface
     ) {
         val cameraProvider = getCameraProvider()
+        val rotation = targetRotation()
 
         val preview = Preview.Builder()
+            .setTargetRotation(rotation)
             .build()
             .also {
                 it.surfaceProvider = Preview.SurfaceProvider { request ->
@@ -89,8 +106,8 @@ class CameraManager(private val context: Context) {
 
         val imageCaptureUseCase = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+            .setTargetRotation(rotation)
             .build()
-        imageCapture = imageCaptureUseCase
 
         val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
@@ -103,9 +120,38 @@ class CameraManager(private val context: Context) {
                     preview,
                     imageCaptureUseCase
                 )
+                previewUseCase = preview
+                imageCapture = imageCaptureUseCase
             } catch (e: Exception) {
-                e.printStackTrace()
+                previewUseCase = null
+                imageCapture = null
+                Log.e(TAG, "Camera binding failed", e)
+                throw e
             }
+        }
+    }
+
+    fun updateTargetRotation() {
+        val rotation = targetRotation()
+        runOnMain {
+            previewUseCase?.targetRotation = rotation
+            imageCapture?.targetRotation = rotation
+        }
+    }
+
+    fun stopCamera() {
+        runOnMain {
+            cameraProvider?.unbindAll()
+            previewUseCase = null
+            imageCapture = null
+        }
+    }
+
+    private fun runOnMain(block: () -> Unit) {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            block()
+        } else {
+            ContextCompat.getMainExecutor(context).execute(block)
         }
     }
 
@@ -114,11 +160,36 @@ class CameraManager(private val context: Context) {
             val future = ProcessCameraProvider.getInstance(context)
             future.addListener({
                 try {
-                    continuation.resume(future.get())
+                    val provider = future.get()
+                    cameraProvider = provider
+                    continuation.resume(provider)
                 } catch (e: Exception) {
                     continuation.resumeWith(Result.failure(e))
                 }
             }, ContextCompat.getMainExecutor(context))
+            continuation.invokeOnCancellation {
+                future.cancel(true)
+            }
         }
+
+    private fun targetRotation(): Int {
+        val activity = context.findActivity()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            activity?.display?.rotation ?: context.display?.rotation ?: Surface.ROTATION_0
+        } else {
+            @Suppress("DEPRECATION")
+            activity?.windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_0
+        }
+    }
+
+    private tailrec fun Context.findActivity(): Activity? = when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+
+    private companion object {
+        private const val TAG = "CameraManager"
+    }
 }
 

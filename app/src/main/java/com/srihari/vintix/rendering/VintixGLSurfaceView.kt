@@ -20,6 +20,7 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
     init {
         // Request OpenGL ES 2.0 context
         setEGLContextClientVersion(2)
+        preserveEGLContextOnPause = true
 
         // Create and set the renderer
         vintixRenderer = VintixRenderer()
@@ -44,10 +45,11 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
      * Clean up GPU resources when the view is detached.
      */
     override fun onDetachedFromWindow() {
-        super.onDetachedFromWindow()
-        queueEvent {
-            vintixRenderer.release()
+        runCatching {
+            queueEvent {
+                vintixRenderer.release()
+            }
         }
+        super.onDetachedFromWindow()
     }
 }
-

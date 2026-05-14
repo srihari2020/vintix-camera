@@ -1,6 +1,7 @@
 package com.srihari.vintix.ui.camera
 
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
@@ -27,10 +28,17 @@ fun CaptureFlashOverlay(
     LaunchedEffect(trigger) {
         if (trigger) {
             if (durationMs > 0) {
-                alpha.snapTo(0.6f)
+                alpha.snapTo(0f)
+                alpha.animateTo(
+                    targetValue = 0.66f,
+                    animationSpec = tween(durationMillis = 24)
+                )
                 alpha.animateTo(
                     targetValue = 0f,
-                    animationSpec = tween(durationMillis = durationMs)
+                    animationSpec = tween(
+                        durationMillis = durationMs,
+                        easing = FastOutSlowInEasing
+                    )
                 )
             }
             onAnimationComplete()
