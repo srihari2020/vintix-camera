@@ -41,9 +41,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.graphics.Color
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 private const val TAG = "CameraScreen"
+
+/** Timeout for camera initialization before showing error/retry state. */
+private const val CAMERA_INIT_TIMEOUT_MS = 20_000L
 
 @Composable
 fun CameraScreen(
@@ -75,6 +79,12 @@ fun CameraScreen(
      * This is flipped automatically if the GL pipeline fails to initialize.
      */
     var useGlPreview by remember { mutableStateOf(true) }
+
+    /**
+     * Key incremented on each retry to force CameraPreview recomposition.
+     * When this changes, the LaunchedEffect inside CameraPreview re-fires.
+     */
+    var cameraRetryKey by remember { mutableStateOf(0) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -134,6 +144,19 @@ fun CameraScreen(
         }
     }
 
+    // Initialization timeout: if camera stays in Initializing too long, show error.
+    LaunchedEffect(cameraAvailability, cameraRetryKey) {
+        if (cameraAvailability is CameraAvailability.Initializing) {
+            Log.d(TAG, "Camera initializing — starting ${CAMERA_INIT_TIMEOUT_MS}ms watchdog")
+            delay(CAMERA_INIT_TIMEOUT_MS)
+            // Recheck after delay — may have resolved
+            if (viewModel.cameraAvailability.value is CameraAvailability.Initializing) {
+                Log.e(TAG, "Camera initialization timed out after ${CAMERA_INIT_TIMEOUT_MS}ms")
+                viewModel.onCameraError("Camera timed out — tap RETRY")
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         if (isCameraPermissionGranted) {
             Box(
@@ -154,31 +177,39 @@ fun CameraScreen(
                             onGlViewReady = { glViewRef = it },
                             onCameraError = { throwable ->
                                 Log.e(TAG, "GLPreview error — falling back to CameraPreview", throwable)
-                                // Automatically fall back to safe mode
-                                useGlPreview = false
+                                // Clean up GL state before switching
                                 glViewRef = null
                                 cameraManager = null
+                                // Reset camera availability so the new path starts fresh
+                                viewModel.retryCamera()
+                                // Automatically fall back to safe mode
+                                useGlPreview = false
                                 viewModel.onCameraError(
                                     "GL pipeline failed, using safe preview: ${throwable.message}"
                                 )
+                                // Immediately reset to Initializing so CameraPreview can take over
+                                viewModel.retryCamera()
                             }
                         )
                     } else {
                         // --- SAFE MODE: CameraPreview (PreviewView) ---
-                        Log.d(TAG, "Using CameraPreview (safe mode)")
-                        CameraPreview(
-                            onCameraReady = { manager ->
-                                Log.d(TAG, "CameraPreview camera ready (safe mode)")
-                                cameraManager = manager
-                                viewModel.onCameraReady()
-                            },
-                            onCameraError = { throwable ->
-                                Log.e(TAG, "CameraPreview also failed", throwable)
-                                viewModel.onCameraError(
-                                    throwable.message ?: "Camera unavailable"
-                                )
-                            }
-                        )
+                        Log.d(TAG, "Composing CameraPreview (safe mode) retryKey=$cameraRetryKey")
+                        // Use key() to allow forcing recomposition on retry
+                        androidx.compose.runtime.key(cameraRetryKey) {
+                            CameraPreview(
+                                onCameraReady = { manager ->
+                                    Log.d(TAG, "CameraPreview camera ready (safe mode)")
+                                    cameraManager = manager
+                                    viewModel.onCameraReady()
+                                },
+                                onCameraError = { throwable ->
+                                    Log.e(TAG, "CameraPreview also failed", throwable)
+                                    viewModel.onCameraError(
+                                        throwable.message ?: "Camera unavailable"
+                                    )
+                                }
+                            )
+                        }
                     }
 
                     val capturingState = captureState as? CaptureState.Capturing
@@ -207,15 +238,47 @@ fun CameraScreen(
                 )
             }
 
+            // Emergency diagnostics overlay (temporary — remove once stable)
+            DiagnosticsOverlay(
+                useGlPreview = useGlPreview,
+                cameraAvailability = cameraAvailability,
+                cameraBound = cameraManager?.imageCapture != null,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(top = if (BuildConfig.TELEMETRY_ENABLED) 120.dp else 8.dp, start = 8.dp)
+            )
+
             when (val availability = cameraAvailability) {
                 CameraAvailability.Initializing -> CameraStatusOverlay(
                     text = "WAKING CAMERA",
                     modifier = Modifier.align(Alignment.Center)
                 )
-                is CameraAvailability.Error -> CameraStatusOverlay(
-                    text = availability.message,
-                    modifier = Modifier.align(Alignment.Center)
-                )
+                is CameraAvailability.Error -> {
+                    // Show error + retry button instead of dead black UI
+                    Column(
+                        modifier = Modifier.align(Alignment.Center),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        CameraStatusOverlay(text = availability.message)
+                        androidx.compose.material3.TextButton(
+                            onClick = {
+                                Log.d(TAG, "RETRY tapped — resetting camera state")
+                                cameraManager = null
+                                cameraRetryKey++
+                                viewModel.retryCamera()
+                            }
+                        ) {
+                            Text(
+                                text = "RETRY",
+                                color = Color.White,
+                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                fontSize = 16.sp
+                            )
+                        }
+                    }
+                }
                 CameraAvailability.Ready -> Unit
             }
 
@@ -233,7 +296,10 @@ fun CameraScreen(
             ProfileSelector(
                 profiles = profiles.keys.toList(),
                 selectedProfile = selectedProfileName,
-                onProfileSelected = { selectedProfileName = it },
+                onProfileSelected = {
+                    Log.d(TAG, "PROFILE CHIP tapped: $it")
+                    selectedProfileName = it
+                },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
@@ -246,6 +312,7 @@ fun CameraScreen(
 
             ShutterButton(
                 onClick = {
+                    Log.d(TAG, "SHUTTER onClick fired — cameraManager=$cameraManager")
                     val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
                     if (
                         android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
@@ -321,7 +388,10 @@ fun CameraScreen(
             )
 
             androidx.compose.material3.TextButton(
-                onClick = onNavigateToSettings,
+                onClick = {
+                    Log.d(TAG, "SETTINGS tapped")
+                    onNavigateToSettings()
+                },
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .navigationBarsPadding()
@@ -337,7 +407,10 @@ fun CameraScreen(
             }
 
             androidx.compose.material3.TextButton(
-                onClick = onNavigateToGallery,
+                onClick = {
+                    Log.d(TAG, "GALLERY tapped")
+                    onNavigateToGallery()
+                },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
@@ -375,6 +448,43 @@ fun CameraScreen(
                 }
             }
         }
+    }
+}
+
+/**
+ * Temporary emergency diagnostics overlay — shows camera pipeline state
+ * at a glance so stuck states can be identified instantly on-device.
+ *
+ * Remove once the safe-mode path is confirmed stable.
+ */
+@Composable
+private fun DiagnosticsOverlay(
+    useGlPreview: Boolean,
+    cameraAvailability: CameraAvailability,
+    cameraBound: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val mode = if (useGlPreview) "GL" else "SAFE"
+    val availability = when (cameraAvailability) {
+        CameraAvailability.Initializing -> "INIT"
+        CameraAvailability.Ready -> "READY"
+        is CameraAvailability.Error -> "ERR"
+    }
+    val bound = if (cameraBound) "YES" else "NO"
+
+    Column(
+        modifier = modifier
+            .background(Color.Black.copy(alpha = 0.55f))
+            .padding(8.dp)
+    ) {
+        val style = androidx.compose.ui.text.TextStyle(
+            color = Color.Yellow,
+            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            fontSize = 9.sp
+        )
+        Text("MODE: $mode", style = style)
+        Text("CAM: $availability", style = style)
+        Text("BOUND: $bound", style = style)
     }
 }
 

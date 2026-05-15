@@ -58,6 +58,11 @@ class CameraViewModel : ViewModel() {
         _cameraAvailability.value = CameraAvailability.Error(message)
     }
 
+    /** Reset camera to Initializing so a fresh bind attempt can proceed. */
+    fun retryCamera() {
+        _cameraAvailability.value = CameraAvailability.Initializing
+    }
+
     fun resetCaptureState() {
         _captureState.value = CaptureState.Idle
     }

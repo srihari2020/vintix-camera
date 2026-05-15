@@ -2,6 +2,7 @@ package com.srihari.vintix.ui.camera
 
 import android.util.Log
 import android.view.Surface
+import android.view.ViewGroup
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -149,11 +150,20 @@ fun GLPreview(
         lifecycleOwner.lifecycle.addObserver(observer)
 
         onDispose {
-            Log.d(TAG, "onDispose — stopping camera and releasing surface")
+            Log.d(TAG, "onDispose — stopping camera, releasing surface, removing GL view")
             isDisposed.set(true)
             lifecycleOwner.lifecycle.removeObserver(observer)
             cameraManager.stopCamera()
             activeSurface.getAndSet(null)?.release()
+
+            // Explicitly remove GLSurfaceView from its parent to prevent the
+            // SurfaceView zombie from sitting above Compose and stealing touches.
+            try {
+                (glSurfaceView.parent as? ViewGroup)?.removeView(glSurfaceView)
+                Log.d(TAG, "GLSurfaceView removed from parent")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove GLSurfaceView from parent", e)
+            }
         }
     }
 
