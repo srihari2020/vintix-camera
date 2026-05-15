@@ -265,13 +265,32 @@ object RetroPipelineShaders {
     """
 
     /**
+     * Set to TRUE to completely bypass all retro effects and render a raw 1:1 camera passthrough.
+     * This is required for Step 1 of the aggressive stabilization plan.
+     */
+    private const val MINIMAL_PASSTHROUGH_MODE = true
+
+    /**
      * Fragment shader for OES external texture (camera preview).
      * Uses highp precision for Adreno GPU compatibility with samplerExternalOES.
      * Extension directive MUST be on the very first line for some drivers.
      */
-    fun fragmentShaderExternalOes(): String =
-        "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n" +
+    fun fragmentShaderExternalOes(): String {
+        if (MINIMAL_PASSTHROUGH_MODE) {
+            return """
+                #extension GL_OES_EGL_image_external : require
+                precision highp float;
+                varying vec2 vTexCoord;
+                uniform samplerExternalOES uTexture;
+                void main() {
+                    gl_FragColor = texture2D(uTexture, vTexCoord);
+                }
+            """.trimIndent()
+        }
+        
+        return "#extension GL_OES_EGL_image_external : require\nprecision highp float;\n" +
             RETRO_FRAGMENT_CORE.replace("VKX_SAMPLER", "samplerExternalOES")
+    }
 
     /**
      * Fragment shader for 2D texture (still export / FBO).

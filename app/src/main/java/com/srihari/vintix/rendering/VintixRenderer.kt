@@ -11,7 +11,7 @@ import javax.microedition.khronos.opengles.GL10
 import com.srihari.vintix.telemetry.PerformanceTelemetry
 
 /**
- * Core Vintix GPU renderer implementing [GLSurfaceView.Renderer].
+ * Core Vintix GPU renderer implementing [GLSurfaceView.Renderer] and [SurfaceTexture.OnFrameAvailableListener].
  *
  * Supports two modes:
  * - **Camera mode**: Renders live CameraX frames via [SurfaceTexture] + OES external texture
@@ -24,13 +24,10 @@ import com.srihari.vintix.telemetry.PerformanceTelemetry
  * - Framebuffer objects for off-screen rendering.
  * - Filter chaining via multiple [ShaderProgram] instances.
  */
-class VintixRenderer : GLSurfaceView.Renderer {
+class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableListener {
 
     companion object {
         private const val TAG = "VintixRenderer"
-
-        /** Max consecutive frames with updateTexImage failure before triggering recovery. */
-        private const val MAX_UPDATE_FAILURES = 30
 
         /**
          * Vertex shader for camera mode.
@@ -65,10 +62,10 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private var rendererReady: Boolean = false
     private var surfaceWidth: Int = 0
     private var surfaceHeight: Int = 0
-    private val frameGovernor = PreviewFrameGovernor()
 
-    /** Consecutive updateTexImage failure count — triggers recovery at [MAX_UPDATE_FAILURES]. */
-    private var updateFailureCount: Int = 0
+    /** Guards against concurrent updates and drawing. */
+    @Volatile
+    private var frameAvailable: Boolean = false
 
     /**
      * Set to true if the GL pipeline initialization failed.
@@ -111,10 +108,20 @@ class VintixRenderer : GLSurfaceView.Renderer {
     var onSurfaceTextureAvailable: ((SurfaceTexture) -> Unit)? = null
 
     /**
+     * Callback invoked to tell the GLSurfaceView to request a render pass.
+     */
+    var requestRender: (() -> Unit)? = null
+
+    /**
      * Callback invoked (on the GL thread) when the GL pipeline fails to initialize.
      * The UI layer can use this to trigger a fallback to CameraPreview.
      */
     var onGlPipelineFailed: ((Exception) -> Unit)? = null
+
+    override fun onFrameAvailable(surfaceTexture: SurfaceTexture?) {
+        frameAvailable = true
+        requestRender?.invoke()
+    }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         Log.d(TAG, "onSurfaceCreated — initializing camera pipeline")
@@ -123,7 +130,6 @@ class VintixRenderer : GLSurfaceView.Renderer {
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
             rendererReady = false
             initFailed = false
-            updateFailureCount = 0
             releaseSurfaceTextureSafely()
 
             // Initialize identity matrix as default
@@ -171,12 +177,13 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
             // Create SurfaceTexture bound to the OES texture
             surfaceTexture = SurfaceTexture(oesTextureId)
+            surfaceTexture?.setOnFrameAvailableListener(this)
             surfaceTextureReleased = false
             if (surfaceWidth > 0 && surfaceHeight > 0) {
                 surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
             }
             rendererReady = true
-            frameGovernor.reset()
+            frameAvailable = false
 
             checkGlError("onSurfaceCreated end")
             Log.d(TAG, "Camera pipeline initialized — program=${shaderProgram.programId}, oesTexture=$oesTextureId")
@@ -214,31 +221,25 @@ class VintixRenderer : GLSurfaceView.Renderer {
 
     override fun onDrawFrame(gl: GL10?) {
         try {
-            frameGovernor.awaitNextFrame()
             val startNs = System.nanoTime()
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
             // If init failed or not ready, just clear to black
             if (initFailed || !rendererReady) return
 
-            // Pull the latest camera frame into the OES texture
+            // Pull the latest camera frame into the OES texture ONLY if available
             val st = surfaceTexture
             if (st != null && !surfaceTextureReleased) {
-                if (!freezePreview) {
-                    try {
-                        st.updateTexImage()
-                        st.getTransformMatrix(texTransformMatrix)
-                        updateFailureCount = 0 // Reset on success
-                    } catch (e: RuntimeException) {
-                        updateFailureCount++
-                        if (updateFailureCount >= MAX_UPDATE_FAILURES) {
-                            Log.w(TAG, "SurfaceTexture update failed $updateFailureCount times; rebuilding", e)
-                            recoverSurfaceTexture()
-                            return
+                if (frameAvailable) {
+                    if (!freezePreview) {
+                        try {
+                            st.updateTexImage()
+                            st.getTransformMatrix(texTransformMatrix)
+                        } catch (e: RuntimeException) {
+                            Log.e(TAG, "SurfaceTexture update failed", e)
                         }
-                        // Transient failure — render last known good frame
-                        Log.w(TAG, "SurfaceTexture update failed ($updateFailureCount/$MAX_UPDATE_FAILURES)", e)
                     }
+                    frameAvailable = false
                 }
             }
 
@@ -335,7 +336,6 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private fun recoverSurfaceTexture() {
         Log.d(TAG, "Recovering SurfaceTexture")
         rendererReady = false
-        updateFailureCount = 0
         releaseSurfaceTextureSafely()
         if (oesTextureId != 0) {
             GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
@@ -348,12 +348,14 @@ class VintixRenderer : GLSurfaceView.Renderer {
             return
         }
         surfaceTexture = SurfaceTexture(oesTextureId)
+        surfaceTexture?.setOnFrameAvailableListener(this)
         surfaceTextureReleased = false
         if (surfaceWidth > 0 && surfaceHeight > 0) {
             surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
         }
         Matrix.setIdentityM(texTransformMatrix, 0)
         rendererReady = true
+        frameAvailable = false
         surfaceTexture?.let { onSurfaceTextureAvailable?.invoke(it) }
     }
 
@@ -373,28 +375,4 @@ class VintixRenderer : GLSurfaceView.Renderer {
     }
 }
 
-private class PreviewFrameGovernor(
-    private val targetFrameNs: Long = 16_666_667L // ~60 FPS
-) {
-    private var lastFrameNs: Long = 0L
 
-    fun awaitNextFrame() {
-        val previous = lastFrameNs
-        if (previous != 0L) {
-            val elapsed = System.nanoTime() - previous
-            val remaining = targetFrameNs - elapsed
-            if (remaining > 1_000_000L) {
-                try {
-                    Thread.sleep(remaining / 1_000_000L, (remaining % 1_000_000L).toInt())
-                } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-            }
-        }
-        lastFrameNs = System.nanoTime()
-    }
-
-    fun reset() {
-        lastFrameNs = 0L
-    }
-}

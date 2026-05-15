@@ -165,19 +165,14 @@ fun CameraScreen(
                             },
                             onGlViewReady = { glViewRef = it },
                             onCameraError = { throwable ->
-                                Log.e(TAG, "GLPreview error — falling back to CameraPreview", throwable)
-                                // Clean up GL state before switching
+                                Log.e(TAG, "GLPreview error", throwable)
                                 glViewRef = null
                                 cameraManager = null
-                                // Single clean transition to safe mode
-                                viewModel.activateSafeMode(
-                                    "GL pipeline failed: ${throwable.message}"
-                                )
+                                viewModel.onCameraError("GL Pipeline Failed: ${throwable.message}")
                             }
                         )
                     } else {
                         // --- SAFE MODE: CameraPreview (PreviewView) ---
-                        // Use key() to force recomposition on retry
                         androidx.compose.runtime.key(retryKey) {
                             CameraPreview(
                                 onCameraReady = { manager ->
@@ -186,10 +181,8 @@ fun CameraScreen(
                                     viewModel.onCameraReady()
                                 },
                                 onCameraError = { throwable ->
-                                    Log.e(TAG, "CameraPreview also failed", throwable)
-                                    viewModel.onCameraError(
-                                        throwable.message ?: "Camera unavailable"
-                                    )
+                                    Log.e(TAG, "CameraPreview error", throwable)
+                                    viewModel.onCameraError("Safe Mode Failed: ${throwable.message}")
                                 }
                             )
                         }
@@ -240,7 +233,7 @@ fun CameraScreen(
                     modifier = Modifier.align(Alignment.Center)
                 )
                 is CameraAvailability.Error -> {
-                    // Show error + retry button instead of dead black UI
+                    // Show error + manual retry buttons instead of dead black UI
                     Column(
                         modifier = Modifier.align(Alignment.Center),
                         horizontalAlignment = Alignment.CenterHorizontally
@@ -260,6 +253,23 @@ fun CameraScreen(
                                 fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
                                 fontSize = 16.sp
                             )
+                        }
+                        if (!safeModeActive) {
+                            androidx.compose.material3.TextButton(
+                                onClick = {
+                                    Log.d(TAG, "SAFE MODE tapped")
+                                    cameraManager = null
+                                    viewModel.activateSafeMode("User activated safe mode")
+                                }
+                            ) {
+                                Text(
+                                    text = "ENTER SAFE MODE",
+                                    color = Color.Yellow,
+                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                    fontSize = 14.sp
+                                )
+                            }
                         }
                     }
                 }

@@ -37,12 +37,13 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
         // Create and set the renderer
         vintixRenderer = VintixRenderer()
+        vintixRenderer.requestRender = { requestRender() }
         setRenderer(vintixRenderer)
 
-        // Continuous rendering for realtime camera feed
-        renderMode = RENDERMODE_CONTINUOUSLY
+        // Render ONLY when a frame is explicitly available
+        renderMode = RENDERMODE_WHEN_DIRTY
 
-        Log.d(TAG, "Initialized — EGL context version=2, preserveOnPause=true, renderMode=CONTINUOUSLY")
+        Log.d(TAG, "Initialized — EGL context version=2, preserveOnPause=true, renderMode=WHEN_DIRTY")
     }
 
     /**
