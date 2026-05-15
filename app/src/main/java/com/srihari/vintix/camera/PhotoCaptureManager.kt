@@ -216,12 +216,20 @@ class PhotoCaptureManager(private val context: Context) {
     }
 
     private fun applyExifRotation(path: String, bitmap: Bitmap): Bitmap {
-        val rotation = try {
-            ExifInterface(path).rotationDegrees
+        val exif = try {
+            ExifInterface(path)
         } catch (_: Exception) {
-            0
+            null
+        } ?: return bitmap
+
+        val rotation = exif.rotationDegrees
+        if (rotation == 0) {
+            // Check for flipping/mirroring if we ever want to support it, 
+            // but for now we just handle 90/180/270.
+            val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            if (orientation == ExifInterface.ORIENTATION_NORMAL) return bitmap
         }
-        if (rotation == 0) return bitmap
+        
         val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }

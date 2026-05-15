@@ -251,7 +251,13 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
 
             noisePhase = (noisePhase + 0.019f).rem(1f)
             noisePhaseSnapshot = noisePhase
-            profileUniforms?.upload(cameraProfile, noisePhase, false)
+            profileUniforms?.upload(
+                cameraProfile, 
+                noisePhase, 
+                false,
+                width = surfaceWidth.toFloat(),
+                height = surfaceHeight.toFloat()
+            )
 
             // Bind OES texture to unit 0
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)

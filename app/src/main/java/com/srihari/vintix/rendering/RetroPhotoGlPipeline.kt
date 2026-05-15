@@ -88,7 +88,16 @@ class RetroPhotoGlPipeline private constructor() {
 
             val program = shaderProgram!!
             program.use()
-            profileUniforms!!.upload(profile, noisePhase, true, leakIntensity, leakOriginX, leakOriginY)
+            profileUniforms!!.upload(
+                profile, 
+                noisePhase, 
+                true, 
+                leakIntensity, 
+                leakOriginX, 
+                leakOriginY,
+                width = w.toFloat(),
+                height = h.toFloat()
+            )
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTextureId)

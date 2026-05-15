@@ -24,6 +24,11 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
     private val uLeakIntensity = program.getUniformLocation("uLeakIntensity")
     private val uLeakOrigin = program.getUniformLocation("uLeakOrigin")
     private val uExposureMultiplier = program.getUniformLocation("uExposureMultiplier")
+    private val uInternalResolution = program.getUniformLocation("uInternalResolution")
+    private val uBlockArtifacts = program.getUniformLocation("uBlockArtifacts")
+    private val uShadowCrush = program.getUniformLocation("uShadowCrush")
+    private val uHighlightHarshness = program.getUniformLocation("uHighlightHarshness")
+    private val uResolution = program.getUniformLocation("uResolution")
 
     fun upload(
         profile: CameraProfile, 
@@ -31,7 +36,9 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
         isExport: Boolean,
         leakIntensity: Float = 0f,
         leakOriginX: Float = 0f,
-        leakOriginY: Float = 0f
+        leakOriginY: Float = 0f,
+        width: Float = 0f,
+        height: Float = 0f
     ) {
         if (uNoisePhase >= 0) GLES20.glUniform1f(uNoisePhase, noisePhase)
         if (uVignetteIntensity >= 0) GLES20.glUniform1f(uVignetteIntensity, profile.vignetteIntensity)
@@ -42,6 +49,11 @@ class CameraProfileUniformHandles(program: ShaderProgram) {
         if (uChromaticAberration >= 0) GLES20.glUniform1f(uChromaticAberration, profile.chromaticAberration)
         if (uLensSoftness >= 0) GLES20.glUniform1f(uLensSoftness, profile.lensSoftness)
         if (uExposureMultiplier >= 0) GLES20.glUniform1f(uExposureMultiplier, profile.exposureMultiplier)
+        if (uInternalResolution >= 0) GLES20.glUniform1f(uInternalResolution, profile.internalResolution)
+        if (uBlockArtifacts >= 0) GLES20.glUniform1f(uBlockArtifacts, profile.blockArtifacts)
+        if (uShadowCrush >= 0) GLES20.glUniform1f(uShadowCrush, profile.shadowCrush)
+        if (uHighlightHarshness >= 0) GLES20.glUniform1f(uHighlightHarshness, profile.highlightHarshness)
+        if (uResolution >= 0) GLES20.glUniform2f(uResolution, width, height)
 
         if (isExport) {
             if (uHalationStrength >= 0) GLES20.glUniform1f(uHalationStrength, profile.halationStrength * profile.flashBehavior.extraHalation)
