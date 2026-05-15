@@ -32,7 +32,10 @@ class CameraManager(private val context: Context) {
 
     /** Guards against duplicate bindToLifecycle calls. */
     @Volatile
-    private var isBound: Boolean = false
+    private var _isBound: Boolean = false
+
+    /** Whether the camera is currently bound to a lifecycle. */
+    val isBound: Boolean get() = _isBound
 
     /** Exposed for capture callers. Only available after [startCamera] completes. */
     var imageCapture: ImageCapture? = null
@@ -75,7 +78,7 @@ class CameraManager(private val context: Context) {
             try {
                 Log.d(TAG, "Unbinding all use cases before rebind")
                 provider.unbindAll()
-                isBound = false
+                _isBound = false
 
                 Log.d(TAG, "bindToLifecycle — preview + imageCapture")
                 provider.bindToLifecycle(
@@ -86,12 +89,12 @@ class CameraManager(private val context: Context) {
                 )
                 previewUseCase = preview
                 imageCapture = imageCaptureUseCase
-                isBound = true
+                _isBound = true
                 Log.d(TAG, "Camera bound successfully (SurfaceProvider mode)")
             } catch (e: Exception) {
                 previewUseCase = null
                 imageCapture = null
-                isBound = false
+                _isBound = false
                 Log.e(TAG, "Camera binding failed", e)
                 throw e
             }
@@ -146,7 +149,7 @@ class CameraManager(private val context: Context) {
             try {
                 Log.d(TAG, "Unbinding all use cases before rebind")
                 provider.unbindAll()
-                isBound = false
+                _isBound = false
 
                 Log.d(TAG, "bindToLifecycle — preview(Surface) + imageCapture")
                 provider.bindToLifecycle(
@@ -157,12 +160,12 @@ class CameraManager(private val context: Context) {
                 )
                 previewUseCase = preview
                 imageCapture = imageCaptureUseCase
-                isBound = true
+                _isBound = true
                 Log.d(TAG, "Camera bound successfully (Surface/GL mode)")
             } catch (e: Exception) {
                 previewUseCase = null
                 imageCapture = null
-                isBound = false
+                _isBound = false
                 Log.e(TAG, "Camera binding failed", e)
                 throw e
             }
@@ -178,6 +181,10 @@ class CameraManager(private val context: Context) {
     }
 
     fun stopCamera() {
+        if (!_isBound && cameraProvider == null) {
+            Log.d(TAG, "stopCamera — already stopped, skipping")
+            return
+        }
         Log.d(TAG, "stopCamera — unbinding all")
         runOnMain {
             try {
@@ -187,7 +194,7 @@ class CameraManager(private val context: Context) {
             }
             previewUseCase = null
             imageCapture = null
-            isBound = false
+            _isBound = false
         }
     }
 

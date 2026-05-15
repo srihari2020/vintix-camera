@@ -133,7 +133,7 @@ fun GalleryScreen(
 
             TextButton(
                 onClick = {
-                    val currentPhoto = photos[pagerState.currentPage]
+                    val currentPhoto = photos.getOrNull(pagerState.currentPage) ?: return@TextButton
                     val shareIntent = Intent().apply {
                         action = Intent.ACTION_SEND
                         putExtra(Intent.EXTRA_STREAM, currentPhoto.uri)
@@ -154,32 +154,35 @@ fun GalleryScreen(
         }
 
         // Bottom info overlay (retro style)
-        val currentPhoto = photos[pagerState.currentPage]
-        Column(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.4f))
-                .navigationBarsPadding()
-                .padding(16.dp)
-        ) {
-            val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
-            val dateStr = dateFormat.format(Date(currentPhoto.dateTaken))
-            
-            Text(
-                text = dateStr,
-                color = Color(0xFFFF9800), // Classic digital orange
-                fontFamily = FontFamily.Monospace,
-                fontSize = 14.sp
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = "PROFILE: ${currentPhoto.profileName.uppercase(Locale.US)}",
-                color = Color.White,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                letterSpacing = 1.sp
-            )
+        val safeIndex = pagerState.currentPage.coerceIn(0, (photos.size - 1).coerceAtLeast(0))
+        val currentPhoto = photos.getOrNull(safeIndex)
+        if (currentPhoto != null) {
+            Column(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth()
+                    .background(Color.Black.copy(alpha = 0.4f))
+                    .navigationBarsPadding()
+                    .padding(16.dp)
+            ) {
+                val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
+                val dateStr = dateFormat.format(Date(currentPhoto.dateTaken))
+                
+                Text(
+                    text = dateStr,
+                    color = Color(0xFFFF9800), // Classic digital orange
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "PROFILE: ${currentPhoto.profileName.uppercase(Locale.US)}",
+                    color = Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    letterSpacing = 1.sp
+                )
+            }
         }
     }
 }

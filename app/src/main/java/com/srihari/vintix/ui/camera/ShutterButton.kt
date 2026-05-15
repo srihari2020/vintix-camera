@@ -1,6 +1,5 @@
 package com.srihari.vintix.ui.camera
 
-import android.util.Log
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
@@ -20,8 +19,6 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.dp
-
-private const val TAG = "ShutterButton"
 
 /**
  * Classic camera shutter button — outer ring with inner filled circle.
@@ -55,15 +52,11 @@ fun ShutterButton(
                 if (enabled) {
                     detectTapGestures(
                         onPress = {
-                            Log.d(TAG, "SHUTTER PRESSED (enabled=$enabled)")
                             isPressed = true
                             val released = tryAwaitRelease()
                             isPressed = false
                             if (released) {
-                                Log.d(TAG, "SHUTTER RELEASED — firing onClick")
                                 onClick()
-                            } else {
-                                Log.d(TAG, "SHUTTER press cancelled")
                             }
                         }
                     )

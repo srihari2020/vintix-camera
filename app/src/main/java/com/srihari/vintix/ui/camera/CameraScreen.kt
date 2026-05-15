@@ -60,6 +60,8 @@ fun CameraScreen(
     val isCameraPermissionGranted by viewModel.isCameraPermissionGranted.collectAsState()
     val captureState by viewModel.captureState.collectAsState()
     val cameraAvailability by viewModel.cameraAvailability.collectAsState()
+    val safeModeActive by viewModel.safeModeActive.collectAsState()
+    val retryKey by viewModel.retryKey.collectAsState()
     val appSettings by settingsViewModel.settings.collectAsState()
 
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
@@ -73,18 +75,6 @@ fun CameraScreen(
             load(android.media.MediaActionSound.SHUTTER_CLICK)
         }
     }
-
-    /**
-     * Safe mode flag: when true, we use CameraPreview (PreviewView) instead of GLPreview.
-     * This is flipped automatically if the GL pipeline fails to initialize.
-     */
-    var useGlPreview by remember { mutableStateOf(true) }
-
-    /**
-     * Key incremented on each retry to force CameraPreview recomposition.
-     * When this changes, the LaunchedEffect inside CameraPreview re-fires.
-     */
-    var cameraRetryKey by remember { mutableStateOf(0) }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -144,10 +134,9 @@ fun CameraScreen(
         }
     }
 
-    // Initialization timeout: if camera stays in Initializing too long, show error.
-    LaunchedEffect(cameraAvailability, cameraRetryKey) {
+    // Initialization timeout: if camera stays in Initializing too long, show error with retry.
+    LaunchedEffect(cameraAvailability, retryKey) {
         if (cameraAvailability is CameraAvailability.Initializing) {
-            Log.d(TAG, "Camera initializing — starting ${CAMERA_INIT_TIMEOUT_MS}ms watchdog")
             delay(CAMERA_INIT_TIMEOUT_MS)
             // Recheck after delay — may have resolved
             if (viewModel.cameraAvailability.value is CameraAvailability.Initializing) {
@@ -165,7 +154,7 @@ fun CameraScreen(
             ) {
                 val portraitRatio = 1f / currentProfile.aspectRatio.ratio
                 Box(modifier = Modifier.aspectRatio(portraitRatio)) {
-                    if (useGlPreview) {
+                    if (!safeModeActive) {
                         // --- GL PIPELINE PATH ---
                         GLPreview(
                             cameraProfile = currentProfile,
@@ -180,22 +169,16 @@ fun CameraScreen(
                                 // Clean up GL state before switching
                                 glViewRef = null
                                 cameraManager = null
-                                // Reset camera availability so the new path starts fresh
-                                viewModel.retryCamera()
-                                // Automatically fall back to safe mode
-                                useGlPreview = false
-                                viewModel.onCameraError(
-                                    "GL pipeline failed, using safe preview: ${throwable.message}"
+                                // Single clean transition to safe mode
+                                viewModel.activateSafeMode(
+                                    "GL pipeline failed: ${throwable.message}"
                                 )
-                                // Immediately reset to Initializing so CameraPreview can take over
-                                viewModel.retryCamera()
                             }
                         )
                     } else {
                         // --- SAFE MODE: CameraPreview (PreviewView) ---
-                        Log.d(TAG, "Composing CameraPreview (safe mode) retryKey=$cameraRetryKey")
-                        // Use key() to allow forcing recomposition on retry
-                        androidx.compose.runtime.key(cameraRetryKey) {
+                        // Use key() to force recomposition on retry
+                        androidx.compose.runtime.key(retryKey) {
                             CameraPreview(
                                 onCameraReady = { manager ->
                                     Log.d(TAG, "CameraPreview camera ready (safe mode)")
@@ -228,7 +211,7 @@ fun CameraScreen(
             }
 
             // Safe mode indicator
-            if (!useGlPreview) {
+            if (safeModeActive) {
                 CameraStatusOverlay(
                     text = "SAFE MODE",
                     modifier = Modifier
@@ -238,16 +221,18 @@ fun CameraScreen(
                 )
             }
 
-            // Emergency diagnostics overlay (temporary — remove once stable)
-            DiagnosticsOverlay(
-                useGlPreview = useGlPreview,
-                cameraAvailability = cameraAvailability,
-                cameraBound = cameraManager?.imageCapture != null,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .statusBarsPadding()
-                    .padding(top = if (BuildConfig.TELEMETRY_ENABLED) 120.dp else 8.dp, start = 8.dp)
-            )
+            // Debug diagnostics — only in debug builds
+            if (BuildConfig.TELEMETRY_ENABLED) {
+                DiagnosticsOverlay(
+                    safeModeActive = safeModeActive,
+                    cameraAvailability = cameraAvailability,
+                    cameraBound = cameraManager?.imageCapture != null,
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .statusBarsPadding()
+                        .padding(top = 120.dp, start = 8.dp)
+                )
+            }
 
             when (val availability = cameraAvailability) {
                 CameraAvailability.Initializing -> CameraStatusOverlay(
@@ -265,7 +250,6 @@ fun CameraScreen(
                             onClick = {
                                 Log.d(TAG, "RETRY tapped — resetting camera state")
                                 cameraManager = null
-                                cameraRetryKey++
                                 viewModel.retryCamera()
                             }
                         ) {
@@ -296,10 +280,7 @@ fun CameraScreen(
             ProfileSelector(
                 profiles = profiles.keys.toList(),
                 selectedProfile = selectedProfileName,
-                onProfileSelected = {
-                    Log.d(TAG, "PROFILE CHIP tapped: $it")
-                    selectedProfileName = it
-                },
+                onProfileSelected = { selectedProfileName = it },
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
@@ -312,7 +293,6 @@ fun CameraScreen(
 
             ShutterButton(
                 onClick = {
-                    Log.d(TAG, "SHUTTER onClick fired — cameraManager=$cameraManager")
                     val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
                     if (
                         android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
@@ -343,7 +323,7 @@ fun CameraScreen(
                     }
 
                     // Freeze preview only when GL pipeline is active
-                    if (useGlPreview && feedback.captureFreezeMs > 0) {
+                    if (!safeModeActive && feedback.captureFreezeMs > 0) {
                         glViewRef?.vintixRenderer?.freezePreview = true
                         glViewRef?.postDelayed({
                             glViewRef?.vintixRenderer?.freezePreview = false
@@ -388,10 +368,7 @@ fun CameraScreen(
             )
 
             androidx.compose.material3.TextButton(
-                onClick = {
-                    Log.d(TAG, "SETTINGS tapped")
-                    onNavigateToSettings()
-                },
+                onClick = onNavigateToSettings,
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .navigationBarsPadding()
@@ -407,10 +384,7 @@ fun CameraScreen(
             }
 
             androidx.compose.material3.TextButton(
-                onClick = {
-                    Log.d(TAG, "GALLERY tapped")
-                    onNavigateToGallery()
-                },
+                onClick = onNavigateToGallery,
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .navigationBarsPadding()
@@ -452,19 +426,18 @@ fun CameraScreen(
 }
 
 /**
- * Temporary emergency diagnostics overlay — shows camera pipeline state
- * at a glance so stuck states can be identified instantly on-device.
- *
- * Remove once the safe-mode path is confirmed stable.
+ * Debug-only diagnostics overlay — shows camera pipeline state
+ * at a glance for on-device debugging.
+ * Only visible when [BuildConfig.TELEMETRY_ENABLED] is true (debug builds).
  */
 @Composable
 private fun DiagnosticsOverlay(
-    useGlPreview: Boolean,
+    safeModeActive: Boolean,
     cameraAvailability: CameraAvailability,
     cameraBound: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    val mode = if (useGlPreview) "GL" else "SAFE"
+    val mode = if (safeModeActive) "SAFE" else "GL"
     val availability = when (cameraAvailability) {
         CameraAvailability.Initializing -> "INIT"
         CameraAvailability.Ready -> "READY"

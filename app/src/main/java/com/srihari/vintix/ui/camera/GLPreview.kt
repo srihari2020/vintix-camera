@@ -120,7 +120,7 @@ fun GLPreview(
     // Push profile updates to the GL thread safely
     LaunchedEffect(cameraProfile) {
         try {
-            glSurfaceView.queueEvent {
+            glSurfaceView.safeQueueEvent {
                 glSurfaceView.vintixRenderer.cameraProfile = cameraProfile
             }
         } catch (e: Exception) {

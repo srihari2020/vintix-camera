@@ -14,12 +14,21 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.srihari.vintix.camera.CameraManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.coroutines.resume
 
 private const val TAG = "CameraPreview"
 
-/** Timeout for the entire CameraPreview start sequence. */
+/** Timeout for the entire CameraPreview start + STREAMING sequence. */
 private const val CAMERA_PREVIEW_TIMEOUT_MS = 15_000L
+
+/** How long to wait for PreviewView to reach STREAMING after binding. */
+private const val STREAMING_TIMEOUT_MS = 10_000L
 
 @SuppressLint("ClickableViewAccessibility")
 @Composable
@@ -31,8 +40,6 @@ fun CameraPreview(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val cameraManager = remember { CameraManager(context) }
-
-    Log.d(TAG, "CameraPreview composed (safe mode path)")
 
     val previewView = remember {
         PreviewView(context).apply {
@@ -51,20 +58,36 @@ fun CameraPreview(
     }
 
     LaunchedEffect(Unit) {
-        Log.d(TAG, "Starting CameraX with PreviewView (timeout=${CAMERA_PREVIEW_TIMEOUT_MS}ms)")
+        Log.d(TAG, "Starting CameraX bind sequence (timeout=${CAMERA_PREVIEW_TIMEOUT_MS}ms)")
         try {
-            val result = withTimeoutOrNull(CAMERA_PREVIEW_TIMEOUT_MS) {
+            // Phase 1: Bind CameraX to the PreviewView's surface provider
+            val bindResult = withTimeoutOrNull(CAMERA_PREVIEW_TIMEOUT_MS) {
                 cameraManager.startCamera(
                     lifecycleOwner = lifecycleOwner,
                     surfaceProvider = previewView.surfaceProvider
                 )
             }
-            if (result == null) {
+            if (bindResult == null) {
                 throw IllegalStateException(
-                    "CameraPreview timed out after ${CAMERA_PREVIEW_TIMEOUT_MS}ms"
+                    "CameraX bind timed out after ${CAMERA_PREVIEW_TIMEOUT_MS}ms"
                 )
             }
-            Log.d(TAG, "Camera started successfully — preview should be visible")
+            Log.d(TAG, "CameraX bound — waiting for preview to reach STREAMING")
+
+            // Phase 2: Wait for the PreviewView to actually start rendering frames.
+            // This catches the case where binding succeeds but HAL never delivers frames.
+            val streamingReached = withTimeoutOrNull(STREAMING_TIMEOUT_MS) {
+                // Observe LiveData on Main thread; suspend until STREAMING or timeout
+                awaitStreamState(previewView, PreviewView.StreamState.STREAMING)
+            }
+
+            if (streamingReached == null) {
+                Log.w(TAG, "Preview did not reach STREAMING within ${STREAMING_TIMEOUT_MS}ms — proceeding anyway")
+                // Don't fail hard — some devices report STREAMING late but frames appear.
+            } else {
+                Log.d(TAG, "Preview reached STREAMING — camera is fully operational")
+            }
+
             onCameraReady(cameraManager)
         } catch (e: Exception) {
             Log.e(TAG, "Camera start failed", e)
@@ -86,4 +109,32 @@ fun CameraPreview(
         },
         modifier = modifier.fillMaxSize()
     )
+}
+
+/**
+ * Suspends until [PreviewView.getPreviewStreamState] emits [targetState].
+ * LiveData observation happens on the Main dispatcher.
+ */
+private suspend fun awaitStreamState(
+    previewView: PreviewView,
+    targetState: PreviewView.StreamState
+): PreviewView.StreamState = withContext(Dispatchers.Main) {
+    suspendCancellableCoroutine { continuation ->
+        val liveData = previewView.previewStreamState
+        val observer = object : androidx.lifecycle.Observer<PreviewView.StreamState> {
+            override fun onChanged(value: PreviewView.StreamState) {
+                Log.d(TAG, "PreviewStreamState: $value")
+                if (value == targetState) {
+                    liveData.removeObserver(this)
+                    if (continuation.isActive) {
+                        continuation.resume(value)
+                    }
+                }
+            }
+        }
+        liveData.observeForever(observer)
+        continuation.invokeOnCancellation {
+            liveData.removeObserver(observer)
+        }
+    }
 }

@@ -56,6 +56,30 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
         vintixRenderer.onSurfaceTextureAvailable = callback
     }
 
+    /**
+     * Queues a [Runnable] on the GL thread, catching [IllegalStateException]
+     * that may occur if the view has already been detached.
+     * Returns true if the event was queued successfully.
+     */
+    fun safeQueueEvent(r: Runnable): Boolean {
+        if (isDetached) {
+            Log.w(TAG, "safeQueueEvent ignored — view already detached")
+            return false
+        }
+        return try {
+            queueEvent(r)
+            true
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "safeQueueEvent failed — GL thread unavailable", e)
+            false
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        Log.d(TAG, "onAttachedToWindow")
+    }
+
     override fun onPause() {
         if (isDetached) {
             Log.w(TAG, "onPause ignored — view already detached")

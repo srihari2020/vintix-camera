@@ -29,6 +29,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
     companion object {
         private const val TAG = "VintixRenderer"
 
+        /** Max consecutive frames with updateTexImage failure before triggering recovery. */
+        private const val MAX_UPDATE_FAILURES = 30
+
         /**
          * Vertex shader for camera mode.
          * Applies the SurfaceTexture transform matrix to texture coordinates
@@ -63,6 +66,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private var surfaceWidth: Int = 0
     private var surfaceHeight: Int = 0
     private val frameGovernor = PreviewFrameGovernor()
+
+    /** Consecutive updateTexImage failure count — triggers recovery at [MAX_UPDATE_FAILURES]. */
+    private var updateFailureCount: Int = 0
 
     /**
      * Set to true if the GL pipeline initialization failed.
@@ -117,6 +123,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
             rendererReady = false
             initFailed = false
+            updateFailureCount = 0
             releaseSurfaceTextureSafely()
 
             // Initialize identity matrix as default
@@ -146,6 +153,8 @@ class VintixRenderer : GLSurfaceView.Renderer {
             textureUniformLocation = shaderProgram.getUniformLocation("uTexture")
             texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
             profileUniforms = CameraProfileUniformHandles(shaderProgram)
+
+            checkGlError("after shader setup")
 
             // Initialize geometry
             quad = TexturedQuad()
@@ -192,7 +201,9 @@ class VintixRenderer : GLSurfaceView.Renderer {
         GLES20.glViewport(0, 0, width, height)
 
         // Update the SurfaceTexture default buffer size to match the viewport
-        surfaceTexture?.setDefaultBufferSize(width, height)
+        if (!surfaceTextureReleased) {
+            surfaceTexture?.setDefaultBufferSize(width, height)
+        }
     }
 
     /**
@@ -217,10 +228,16 @@ class VintixRenderer : GLSurfaceView.Renderer {
                     try {
                         st.updateTexImage()
                         st.getTransformMatrix(texTransformMatrix)
+                        updateFailureCount = 0 // Reset on success
                     } catch (e: RuntimeException) {
-                        Log.w(TAG, "SurfaceTexture update failed; rebuilding camera surface", e)
-                        recoverSurfaceTexture()
-                        return
+                        updateFailureCount++
+                        if (updateFailureCount >= MAX_UPDATE_FAILURES) {
+                            Log.w(TAG, "SurfaceTexture update failed $updateFailureCount times; rebuilding", e)
+                            recoverSurfaceTexture()
+                            return
+                        }
+                        // Transient failure — render last known good frame
+                        Log.w(TAG, "SurfaceTexture update failed ($updateFailureCount/$MAX_UPDATE_FAILURES)", e)
                     }
                 }
             }
@@ -318,6 +335,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
     private fun recoverSurfaceTexture() {
         Log.d(TAG, "Recovering SurfaceTexture")
         rendererReady = false
+        updateFailureCount = 0
         releaseSurfaceTextureSafely()
         if (oesTextureId != 0) {
             GLES20.glDeleteTextures(1, intArrayOf(oesTextureId), 0)
@@ -326,6 +344,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
         if (oesTextureId == 0) {
             Log.e(TAG, "Recovery failed — OES texture creation failed")
             initFailed = true
+            notifyPipelineFailed(RuntimeException("SurfaceTexture recovery failed"))
             return
         }
         surfaceTexture = SurfaceTexture(oesTextureId)
@@ -355,7 +374,7 @@ class VintixRenderer : GLSurfaceView.Renderer {
 }
 
 private class PreviewFrameGovernor(
-    private val targetFrameNs: Long = 16_666_667L
+    private val targetFrameNs: Long = 16_666_667L // ~60 FPS
 ) {
     private var lastFrameNs: Long = 0L
 
