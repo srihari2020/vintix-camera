@@ -193,16 +193,37 @@ class RetroPhotoGlPipeline private constructor() {
             throw IllegalStateException("Unable to eglMakeCurrent")
         }
 
-        val sp = ShaderProgram()
-        val vs = sp.compile(GLES20.GL_VERTEX_SHADER, RetroPipelineShaders.PHOTO_VERTEX_SHADER.trimIndent())
-        val fs = sp.compile(GLES20.GL_FRAGMENT_SHADER, RetroPipelineShaders.fragmentShaderTexture2d())
-        if (vs == 0 || fs == 0 || !sp.link(vs, fs)) {
-            sp.release()
-            throw IllegalStateException("Photo retro shader failed to compile or link")
+        // Try compiling shaders with graceful degradation
+        val levels = listOf(
+            RetroPipelineShaders.ShaderLevel.FULL,
+            RetroPipelineShaders.ShaderLevel.MEDIUM,
+            RetroPipelineShaders.ShaderLevel.MINIMAL
+        )
+
+        var success = false
+        for (level in levels) {
+            Log.i(TAG, "Attempting to initialize photo pipeline with shader level: $level")
+            val sp = ShaderProgram()
+            val vs = sp.compile(GLES20.GL_VERTEX_SHADER, RetroPipelineShaders.PHOTO_VERTEX_SHADER.trimIndent())
+            val fs = sp.compile(GLES20.GL_FRAGMENT_SHADER, RetroPipelineShaders.fragmentShaderTexture2d(level))
+            
+            if (vs != 0 && fs != 0 && sp.link(vs, fs)) {
+                Log.i(TAG, "Successfully initialized photo pipeline with level: $level")
+                shaderProgram = sp
+                success = true
+                break
+            } else {
+                Log.w(TAG, "Photo level $level failed, falling back...")
+                sp.release()
+            }
         }
-        shaderProgram = sp
-        profileUniforms = CameraProfileUniformHandles(sp)
-        uTextureLoc = sp.getUniformLocation("uTexture")
+
+        if (!success) {
+            throw IllegalStateException("All photo retro shader levels failed to compile or link")
+        }
+        
+        profileUniforms = CameraProfileUniformHandles(shaderProgram!!)
+        uTextureLoc = shaderProgram!!.getUniformLocation("uTexture")
 
         initialized = true
     }

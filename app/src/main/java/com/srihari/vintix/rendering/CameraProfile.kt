@@ -34,6 +34,8 @@ data class InstabilityBehavior(
     val exposureVariance: Float = 0f,
     /** Variance applied to warmth. */
     val warmthVariance: Float = 0f,
+    /** Variance applied to green/magenta white balance shift. */
+    val wbVariance: Float = 0f,
     /** Variance applied to vignette. */
     val vignetteVariance: Float = 0f,
     /** Variance applied to halation. */
@@ -90,12 +92,16 @@ data class CameraProfile(
      * `1.0` matches the original pipeline.
      */
     val warmth: Float = 1f,
+    /** Green/Magenta white balance shift (-1.0 to 1.0). */
+    val greenMagentaShift: Float = 0f,
     /** Saturation factor in mild desaturation (`1.0` = full color, `0.935` = legacy default). */
     val desaturation: Float = 0.935f,
     /** Scales CCD edge clarity / unsharp gain (baseline `1.0`). */
     val ccdClarity: Float = 1f,
     /** Scales procedural sensor noise amplitudes (baseline `1.0`). */
     val sensorNoise: Float = 1f,
+    /** Intensity of blotchy chroma noise (0.0 to 2.0). */
+    val chromaNoise: Float = 0f,
     /** Scales chromatic aberration offset in the lens stage (baseline `1.0`). */
     val chromaticAberration: Float = 1f,
     /** Scales lens edge softness mix and sample shift (baseline `1.0`). */
@@ -112,10 +118,14 @@ data class CameraProfile(
     val internalResolution: Float = 0f,
     /** Simulates 8x8 block artifacts common in low-quality JPEGs. (0.0 to 2.0) */
     val blockArtifacts: Float = 0f,
+    /** Intensity of mosquito noise artifacts (0.0 to 2.0). */
+    val mosquitoNoise: Float = 0f,
     /** Crushes shadow detail (0.0 to 1.0). */
     val shadowCrush: Float = 0.1f,
     /** Harshness of highlight clipping (0.0 = soft, 1.0 = harsh digital clip). */
     val highlightHarshness: Float = 0.5f,
+    /** CCD saturation bloom intensity (0.0 to 1.0). */
+    val bloomIntensity: Float = 0f,
     /** Flash characteristics applied during photo export. */
     val flashBehavior: FlashBehavior = FlashBehavior(),
     /** Probabilistic light leak behavior applied during photo export. */
@@ -132,6 +142,7 @@ data class CameraProfile(
         return this.copy(
             exposureMultiplier = i.jitter(exposureMultiplier, i.exposureVariance).coerceAtLeast(0f),
             warmth = i.jitter(warmth, i.warmthVariance).coerceAtLeast(0f),
+            greenMagentaShift = i.jitter(greenMagentaShift, i.wbVariance),
             vignetteIntensity = i.jitter(vignetteIntensity, i.vignetteVariance).coerceAtLeast(0f),
             halationStrength = i.jitter(halationStrength, i.halationVariance).coerceAtLeast(0f),
             sensorNoise = i.jitter(sensorNoise, i.noiseVariance).coerceAtLeast(0f)
@@ -139,40 +150,45 @@ data class CameraProfile(
     }
 
     companion object {
-        /** Default tuning preserved from the original hardcoded shader. */
+        /** Default tuning: 2002-era mid-range consumer CCD (e.g. Canon PowerShot S-series) */
         val Default = CameraProfile(
-            vignetteIntensity = 0.09f,
-            halationStrength = 0.72f,
-            warmth = 0.86f,
+            vignetteIntensity = 0.12f,
+            halationStrength = 0.65f,
+            warmth = 0.88f,
+            greenMagentaShift = 0.04f, // Slight green tint bias
             desaturation = 0.94f,
-            ccdClarity = 0.86f,
-            sensorNoise = 0.82f,
-            chromaticAberration = 0.72f,
-            lensSoftness = 0.74f,
-            jpegQuality = 85,
+            ccdClarity = 0.85f,
+            sensorNoise = 0.75f,
+            chromaNoise = 0.65f,
+            chromaticAberration = 0.85f,
+            lensSoftness = 0.65f,
+            jpegQuality = 82,
             aspectRatio = AspectRatio.RATIO_4_3,
-            exportResolution = 1600, // ~2MP authentic early digital res
+            exportResolution = 1600, // 2MP
             internalResolution = 1200f,
-            blockArtifacts = 0.25f,
-            shadowCrush = 0.15f,
-            highlightHarshness = 0.65f,
+            blockArtifacts = 0.45f,
+            mosquitoNoise = 0.35f,
+            shadowCrush = 0.22f,
+            highlightHarshness = 0.75f,
+            bloomIntensity = 0.15f,
             flashBehavior = FlashBehavior(
-                centerExposureBoost = 0.35f,
-                warmBloom = 0.22f,
-                highlightClipping = 0.65f,
-                contrastFlattening = 0.25f,
-                extraHalation = 1.15f
+                centerExposureBoost = 0.45f,
+                warmBloom = 0.35f,
+                highlightClipping = 0.82f,
+                contrastFlattening = 0.35f,
+                extraHalation = 1.25f
             ),
             instabilityBehavior = InstabilityBehavior(
-                exposureVariance = 0.025f,
-                warmthVariance = 0.035f,
-                noiseVariance = 0.08f
+                exposureVariance = 0.04f,
+                warmthVariance = 0.05f,
+                wbVariance = 0.08f,
+                noiseVariance = 0.12f
             ),
             feedbackBehavior = FeedbackBehavior(
                 useDigitalBeep = true,
                 hapticFeedback = true,
-                captureFreezeMs = 120L,
-                flashFadeDurationMs = 90
+                captureFreezeMs = 150L,
+                flashFadeDurationMs = 120
             )
         )
     }
@@ -186,31 +202,34 @@ object CameraProfiles {
     val EarlyDigitalConsumer = CameraProfile.Default
 
     /**
-     * Example alternate preset: lighter retro treatment for reference / daylight.
-     * (Demonstrates multi-profile without changing the default baseline.)
+     * Daylight optimized: cleaner, but still preserves CCD color science.
      */
     val DaylightNeutral = CameraProfile(
-        vignetteIntensity = 0.05f,
-        halationStrength = 0.45f,
-        warmth = 0.55f,
-        desaturation = 0.97f,
-        ccdClarity = 0.55f,
-        sensorNoise = 0.45f,
-        chromaticAberration = 0.5f,
-        lensSoftness = 0.55f,
+        vignetteIntensity = 0.06f,
+        halationStrength = 0.35f,
+        warmth = 0.45f,
+        greenMagentaShift = 0f,
+        desaturation = 0.98f,
+        ccdClarity = 0.45f,
+        sensorNoise = 0.35f,
+        chromaNoise = 0.15f,
+        chromaticAberration = 0.45f,
+        lensSoftness = 0.35f,
         jpegQuality = 95,
         aspectRatio = AspectRatio.RATIO_4_3,
-        exportResolution = 2048,
+        exportResolution = 2560, // 5MP
         internalResolution = 0f,
-        blockArtifacts = 0f,
-        shadowCrush = 0.05f,
-        highlightHarshness = 0.25f,
+        blockArtifacts = 0.15f,
+        mosquitoNoise = 0.1f,
+        shadowCrush = 0.08f,
+        highlightHarshness = 0.35f,
+        bloomIntensity = 0.05f,
         flashBehavior = FlashBehavior(
-            centerExposureBoost = 0.12f,
-            warmBloom = 0.06f,
-            highlightClipping = 0.18f,
-            contrastFlattening = 0.06f,
-            extraHalation = 1.04f
+            centerExposureBoost = 0.25f,
+            warmBloom = 0.12f,
+            highlightClipping = 0.25f,
+            contrastFlattening = 0.15f,
+            extraHalation = 1.05f
         ),
         feedbackBehavior = FeedbackBehavior(
             useDigitalBeep = false,
@@ -221,86 +240,95 @@ object CameraProfiles {
     )
 
     /**
-     * High contrast, cooler tone, sharp, heavy noise.
+     * Aggressive 2003 look: sharp, high chroma noise, cyan skies, yellow whites.
      */
     val CyberShot2003 = CameraProfile(
-        vignetteIntensity = 0.15f,
-        halationStrength = 0.85f,
-        warmth = 0.42f,
-        desaturation = 0.88f,
-        ccdClarity = 1.65f,
-        sensorNoise = 1.85f,
-        chromaticAberration = 0.85f,
-        lensSoftness = 0.42f,
-        jpegQuality = 50,
+        vignetteIntensity = 0.18f,
+        halationStrength = 0.95f,
+        warmth = 0.35f,
+        greenMagentaShift = 0.12f, // Stronger green bias
+        desaturation = 0.92f,
+        ccdClarity = 1.85f, // Oversharpened
+        sensorNoise = 1.45f,
+        chromaNoise = 1.95f, // Blotchy color noise
+        chromaticAberration = 1.15f,
+        lensSoftness = 0.45f,
+        jpegQuality = 45,
         aspectRatio = AspectRatio.RATIO_4_3,
-        exportResolution = 1280, // ~1.2MP chunkier file
-        internalResolution = 1024f,
-        blockArtifacts = 1.15f,
-        shadowCrush = 0.38f,
-        highlightHarshness = 0.95f,
+        exportResolution = 1280, // 1.2MP
+        internalResolution = 960f,
+        blockArtifacts = 1.25f,
+        mosquitoNoise = 1.65f,
+        shadowCrush = 0.45f,
+        highlightHarshness = 0.98f, // Digital clipping
+        bloomIntensity = 0.35f,
         flashBehavior = FlashBehavior(
-            centerExposureBoost = 0.45f,
-            warmBloom = 0.05f,
-            highlightClipping = 0.92f,
-            contrastFlattening = 0.35f,
-            extraHalation = 1.35f
+            centerExposureBoost = 0.65f,
+            warmBloom = 0.15f,
+            highlightClipping = 0.95f,
+            contrastFlattening = 0.45f,
+            extraHalation = 1.45f
         ),
         instabilityBehavior = InstabilityBehavior(
-            exposureVariance = 0.06f,
-            warmthVariance = 0.08f,
-            noiseVariance = 0.25f
+            exposureVariance = 0.08f,
+            warmthVariance = 0.12f,
+            wbVariance = 0.15f,
+            noiseVariance = 0.35f
         ),
         feedbackBehavior = FeedbackBehavior(
             useDigitalBeep = true,
-            hapticFeedback = false,
-            captureFreezeMs = 350L,
-            flashFadeDurationMs = 250
+            hapticFeedback = true,
+            captureFreezeMs = 450L,
+            flashFadeDurationMs = 350
         )
     )
 
     /**
-     * Heavy vignette, strong chromatic aberration, soft lens, warm, high desaturation.
+     * Plastic lens, warm shifts, heavy CA, soft focus.
      */
     val DisposableFilm = CameraProfile(
-        vignetteIntensity = 0.32f,
-        halationStrength = 0.95f,
-        warmth = 1.35f,
-        desaturation = 0.78f,
-        ccdClarity = 0.25f,
-        sensorNoise = 1.15f,
-        chromaticAberration = 1.65f,
-        lensSoftness = 1.45f,
-        jpegQuality = 40,
+        vignetteIntensity = 0.38f,
+        halationStrength = 1.15f,
+        warmth = 1.45f,
+        greenMagentaShift = -0.08f, // Magenta bias
+        desaturation = 0.82f,
+        ccdClarity = 0.15f, // Soft
+        sensorNoise = 1.25f,
+        chromaNoise = 0.85f,
+        chromaticAberration = 2.25f, // Plastic lens fringing
+        lensSoftness = 1.85f,
+        jpegQuality = 35,
         aspectRatio = AspectRatio.RATIO_3_2,
-        exportResolution = null, // Max resolution, mimicking film
-        internalResolution = 800f,
-        blockArtifacts = 1.45f,
-        shadowCrush = 0.22f,
+        exportResolution = null,
+        internalResolution = 720f,
+        blockArtifacts = 0.85f,
+        mosquitoNoise = 0.45f,
+        shadowCrush = 0.18f,
         highlightHarshness = 0.45f,
+        bloomIntensity = 0.45f,
         flashBehavior = FlashBehavior(
-            centerExposureBoost = 0.42f,
-            warmBloom = 0.48f,
-            highlightClipping = 0.35f,
-            contrastFlattening = 0.22f,
-            extraHalation = 1.25f
+            centerExposureBoost = 0.55f,
+            warmBloom = 0.65f,
+            highlightClipping = 0.45f,
+            contrastFlattening = 0.35f,
+            extraHalation = 1.35f
         ),
         lightLeakBehavior = LightLeakBehavior(
-            probability = 0.22f,
-            maxIntensity = 0.45f
+            probability = 0.25f,
+            maxIntensity = 0.55f
         ),
         instabilityBehavior = InstabilityBehavior(
-            exposureVariance = 0.1f,
-            warmthVariance = 0.15f,
-            vignetteVariance = 0.08f,
-            halationVariance = 0.18f,
-            noiseVariance = 0.15f
+            exposureVariance = 0.12f,
+            warmthVariance = 0.18f,
+            vignetteVariance = 0.15f,
+            halationVariance = 0.25f,
+            noiseVariance = 0.2f
         ),
         feedbackBehavior = FeedbackBehavior(
             useDigitalBeep = false,
             hapticFeedback = true,
-            captureFreezeMs = 120L,
-            flashFadeDurationMs = 550
+            captureFreezeMs = 150L,
+            flashFadeDurationMs = 600
         )
     )
 }

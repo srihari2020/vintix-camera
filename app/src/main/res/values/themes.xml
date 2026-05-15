@@ -1,13 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Vintix" parent="android:Theme.Material.Light.NoActionBar">
+    <style name="Base.Theme.Vintix" parent="android:Theme.Material.Light.NoActionBar">
         <item name="android:windowNoTitle">true</item>
         <item name="android:windowActionBar">false</item>
         <item name="android:windowBackground">@color/vintix_black</item>
         <item name="android:navigationBarColor">@color/vintix_black</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
     </style>
+
+    <style name="Theme.Vintix" parent="Base.Theme.Vintix" />
 </resources>

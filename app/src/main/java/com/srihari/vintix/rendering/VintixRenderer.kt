@@ -125,6 +125,22 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
         Log.d(TAG, "onSurfaceCreated — initializing camera pipeline")
+        
+        // Log GPU capabilities
+        val vendor = GLES20.glGetString(GLES20.GL_VENDOR)
+        val renderer = GLES20.glGetString(GLES20.GL_RENDERER)
+        val version = GLES20.glGetString(GLES20.GL_VERSION)
+        Log.i(TAG, "GPU Vendor: $vendor")
+        Log.i(TAG, "GPU Renderer: $renderer")
+        Log.i(TAG, "GPU Version: $version")
+
+        val maxUniforms = IntArray(1)
+        GLES20.glGetIntegerv(GLES20.GL_MAX_FRAGMENT_UNIFORM_VECTORS, maxUniforms, 0)
+        Log.i(TAG, "Max Fragment Uniform Vectors: ${maxUniforms[0]}")
+
+        val maxVarying = IntArray(1)
+        GLES20.glGetIntegerv(GLES20.GL_MAX_VARYING_VECTORS, maxVarying, 0)
+        Log.i(TAG, "Max Varying Vectors: ${maxVarying[0]}")
 
         try {
             GLES20.glClearColor(0.0f, 0.0f, 0.0f, 1.0f)
@@ -132,27 +148,37 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             initFailed = false
             releaseSurfaceTextureSafely()
 
-            // Initialize identity matrix as default
             Matrix.setIdentityM(texTransformMatrix, 0)
 
-            // Initialize shader program with camera (OES) shaders
-            shaderProgram = ShaderProgram()
-            val vertexShader = shaderProgram.compile(GLES20.GL_VERTEX_SHADER, CAMERA_VERTEX_SHADER)
-            val fragmentShader = shaderProgram.compile(GLES20.GL_FRAGMENT_SHADER, cameraFragmentShader())
+            // Try compiling shaders with graceful degradation
+            val levels = listOf(
+                RetroPipelineShaders.ShaderLevel.FULL,
+                RetroPipelineShaders.ShaderLevel.MEDIUM,
+                RetroPipelineShaders.ShaderLevel.MINIMAL
+            )
 
-            if (vertexShader == 0 || fragmentShader == 0) {
-                Log.e(TAG, "Shader compilation failed — vertex=$vertexShader, fragment=$fragmentShader")
-                shaderProgram.release()
-                initFailed = true
-                notifyPipelineFailed(RuntimeException("Shader compilation failed"))
-                return
+            var success = false
+            for (level in levels) {
+                Log.i(TAG, "Attempting to initialize pipeline with shader level: $level")
+                
+                shaderProgram = ShaderProgram()
+                val vertexShader = shaderProgram.compile(GLES20.GL_VERTEX_SHADER, CAMERA_VERTEX_SHADER)
+                val fragmentShader = shaderProgram.compile(GLES20.GL_FRAGMENT_SHADER, RetroPipelineShaders.fragmentShaderExternalOes(level))
+
+                if (vertexShader != 0 && fragmentShader != 0 && shaderProgram.link(vertexShader, fragmentShader)) {
+                    Log.i(TAG, "Successfully initialized pipeline with level: $level")
+                    success = true
+                    break
+                } else {
+                    Log.w(TAG, "Level $level failed, falling back...")
+                    shaderProgram.release()
+                }
             }
 
-            if (!shaderProgram.link(vertexShader, fragmentShader)) {
-                Log.e(TAG, "Shader program linking failed")
-                shaderProgram.release()
+            if (!success) {
+                Log.e(TAG, "All shader levels failed to compile/link")
                 initFailed = true
-                notifyPipelineFailed(RuntimeException("Shader program linking failed"))
+                notifyPipelineFailed(RuntimeException("All shader levels failed"))
                 return
             }
 
@@ -160,42 +186,17 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
             profileUniforms = CameraProfileUniformHandles(shaderProgram)
 
-            checkGlError("after shader setup")
-
-            // Initialize geometry
             quad = TexturedQuad()
-
-            // Create OES texture for camera frames
             oesTextureId = createOESTexture()
-            if (oesTextureId == 0) {
-                Log.e(TAG, "OES texture creation failed")
-                shaderProgram.release()
-                initFailed = true
-                notifyPipelineFailed(RuntimeException("OES texture creation failed"))
-                return
-            }
-
-            // Create SurfaceTexture bound to the OES texture
             surfaceTexture = SurfaceTexture(oesTextureId)
             surfaceTexture?.setOnFrameAvailableListener(this)
-            surfaceTextureReleased = false
-            if (surfaceWidth > 0 && surfaceHeight > 0) {
-                surfaceTexture?.setDefaultBufferSize(surfaceWidth, surfaceHeight)
-            }
+
+            onSurfaceTextureAvailable?.invoke(surfaceTexture!!)
+
             rendererReady = true
-            frameAvailable = false
-
-            checkGlError("onSurfaceCreated end")
-            Log.d(TAG, "Camera pipeline initialized — program=${shaderProgram.programId}, oesTexture=$oesTextureId")
-
-            // Notify the UI layer that the SurfaceTexture is ready
-            surfaceTexture?.let { st ->
-                Log.d(TAG, "Invoking onSurfaceTextureAvailable callback")
-                onSurfaceTextureAvailable?.invoke(st)
-            }
+            Log.d(TAG, "Renderer ready")
         } catch (e: Exception) {
-            Log.e(TAG, "CRITICAL: onSurfaceCreated crashed", e)
-            rendererReady = false
+            Log.e(TAG, "Exception during onSurfaceCreated", e)
             initFailed = true
             notifyPipelineFailed(e)
         }

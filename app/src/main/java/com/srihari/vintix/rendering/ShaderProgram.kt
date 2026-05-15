@@ -42,16 +42,14 @@ class ShaderProgram {
         GLES20.glShaderSource(shader, source)
         GLES20.glCompileShader(shader)
 
-        val compileErr = GLES20.glGetError()
-        if (compileErr != GLES20.GL_NO_ERROR) {
-            Log.w(TAG, "glGetError after compile: $compileErr")
-        }
-
         val status = IntArray(1)
         GLES20.glGetShaderiv(shader, GLES20.GL_COMPILE_STATUS, status, 0)
         if (status[0] == 0) {
             val info = GLES20.glGetShaderInfoLog(shader)
-            Log.e(TAG, "$typeName shader compile error: $info")
+            Log.e(TAG, "========================================")
+            Log.e(TAG, "SHADER COMPILATION FAILED ($typeName)")
+            Log.e(TAG, "Log: $info")
+            Log.e(TAG, "========================================")
             GLES20.glDeleteShader(shader)
             return 0
         }
@@ -61,47 +59,36 @@ class ShaderProgram {
     }
 
     /**
-     * Links a vertex and fragment shader into a program.
+     * Links vertex and fragment shaders into a program.
      *
-     * @param vertexShader Compiled vertex shader ID from [compile]
-     * @param fragmentShader Compiled fragment shader ID from [compile]
-     * @return true if linking succeeded
+     * @param vertexShader Compiled vertex shader ID
+     * @param fragmentShader Compiled fragment shader ID
+     * @return true if successful
      */
     fun link(vertexShader: Int, fragmentShader: Int): Boolean {
-        Log.d(TAG, "Linking program (vertex=$vertexShader, fragment=$fragmentShader)")
-
-        val program = GLES20.glCreateProgram()
-        if (program == 0) {
-            val err = GLES20.glGetError()
-            Log.e(TAG, "Failed to create program (glError=$err)")
+        programId = GLES20.glCreateProgram()
+        if (programId == 0) {
+            Log.e(TAG, "Failed to create GL program")
             return false
         }
 
-        GLES20.glAttachShader(program, vertexShader)
-        GLES20.glAttachShader(program, fragmentShader)
-        GLES20.glLinkProgram(program)
-
-        val linkErr = GLES20.glGetError()
-        if (linkErr != GLES20.GL_NO_ERROR) {
-            Log.w(TAG, "glGetError after link: $linkErr")
-        }
+        GLES20.glAttachShader(programId, vertexShader)
+        GLES20.glAttachShader(programId, fragmentShader)
+        GLES20.glLinkProgram(programId)
 
         val status = IntArray(1)
-        GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0)
+        GLES20.glGetProgramiv(programId, GLES20.GL_LINK_STATUS, status, 0)
         if (status[0] == 0) {
-            val info = GLES20.glGetProgramInfoLog(program)
-            Log.e(TAG, "Program link error: $info")
-            GLES20.glDeleteProgram(program)
+            val info = GLES20.glGetProgramInfoLog(programId)
+            Log.e(TAG, "========================================")
+            Log.e(TAG, "PROGRAM LINKING FAILED")
+            Log.e(TAG, "Log: $info")
+            Log.e(TAG, "========================================")
+            GLES20.glDeleteProgram(programId)
+            programId = 0
             return false
         }
 
-        // Shaders can be detached after linking
-        GLES20.glDetachShader(program, vertexShader)
-        GLES20.glDetachShader(program, fragmentShader)
-        GLES20.glDeleteShader(vertexShader)
-        GLES20.glDeleteShader(fragmentShader)
-
-        programId = program
         Log.d(TAG, "Program linked successfully (id=$programId)")
         return true
     }
