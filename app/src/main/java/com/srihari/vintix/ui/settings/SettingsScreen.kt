@@ -96,11 +96,6 @@ fun SettingsScreen(
                 onCheckedChange = viewModel::setTimestampEnabled
             )
             ToggleSetting(
-                label = "Light leaks",
-                checked = settings.lightLeaksEnabled,
-                onCheckedChange = viewModel::setLightLeaksEnabled
-            )
-            ToggleSetting(
                 label = "Haptics",
                 checked = settings.hapticsEnabled,
                 onCheckedChange = viewModel::setHapticsEnabled

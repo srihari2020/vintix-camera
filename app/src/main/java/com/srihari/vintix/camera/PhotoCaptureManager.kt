@@ -97,10 +97,6 @@ class PhotoCaptureManager(private val context: Context) {
                         val oriented = applyExifRotation(temp.absolutePath, decoded)
                         if (oriented !== decoded) decoded.recycle()
                         
-                        var leakIntensity = 0f
-                        var leakOriginX = 0f
-                        var leakOriginY = 0f
-                        
                         // Apply single-capture randomized variations
                         val captureProfile = cameraProfile.applyInstability()
                         val croppedAndScaled = applyCropAndScale(oriented, captureProfile)

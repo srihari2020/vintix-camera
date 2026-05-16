@@ -30,7 +30,6 @@ enum class ExportQualityPreset(val label: String) {
 
 data class VintixSettings(
     val timestampEnabled: Boolean = true,
-    val lightLeaksEnabled: Boolean = true,
     val hapticsEnabled: Boolean = true,
     val soundEnabled: Boolean = true,
     val exportResolution: ExportResolutionPreset = ExportResolutionPreset.PROFILE,

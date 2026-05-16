@@ -27,10 +27,6 @@ class SettingsRepository(context: Context) {
         dataStore.edit { it[Keys.TIMESTAMP_ENABLED] = enabled }
     }
 
-    suspend fun setLightLeaksEnabled(enabled: Boolean) {
-        dataStore.edit { it[Keys.LIGHT_LEAKS_ENABLED] = enabled }
-    }
-
     suspend fun setHapticsEnabled(enabled: Boolean) {
         dataStore.edit { it[Keys.HAPTICS_ENABLED] = enabled }
     }
@@ -49,7 +45,6 @@ class SettingsRepository(context: Context) {
 
     private fun Preferences.toVintixSettings(): VintixSettings = VintixSettings(
         timestampEnabled = this[Keys.TIMESTAMP_ENABLED] ?: true,
-        lightLeaksEnabled = this[Keys.LIGHT_LEAKS_ENABLED] ?: true,
         hapticsEnabled = this[Keys.HAPTICS_ENABLED] ?: true,
         soundEnabled = this[Keys.SOUND_ENABLED] ?: true,
         exportResolution = enumPreference(
@@ -67,7 +62,6 @@ class SettingsRepository(context: Context) {
 
     private object Keys {
         val TIMESTAMP_ENABLED = booleanPreferencesKey("timestamp_enabled")
-        val LIGHT_LEAKS_ENABLED = booleanPreferencesKey("light_leaks_enabled")
         val HAPTICS_ENABLED = booleanPreferencesKey("haptics_enabled")
         val SOUND_ENABLED = booleanPreferencesKey("sound_enabled")
         val EXPORT_RESOLUTION = stringPreferencesKey("export_resolution")

@@ -22,10 +22,6 @@ class SettingsViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch { repository.setTimestampEnabled(enabled) }
     }
 
-    fun setLightLeaksEnabled(enabled: Boolean) {
-        viewModelScope.launch { repository.setLightLeaksEnabled(enabled) }
-    }
-
     fun setHapticsEnabled(enabled: Boolean) {
         viewModelScope.launch { repository.setHapticsEnabled(enabled) }
     }

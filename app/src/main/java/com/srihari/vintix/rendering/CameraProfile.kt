@@ -1,15 +1,6 @@
 package com.srihari.vintix.rendering
 
 /**
- * defines the probability and intensity of procedural light leaks during export.
- * Simplified: kept for data model consistency but effects removed from core shader for stability.
- */
-data class LightLeakBehavior(
-    val probability: Float = 0f,
-    val maxIntensity: Float = 0f
-)
-
-/**
  * Defines per-capture random variance applied to camera properties for organic inconsistency.
  */
 data class InstabilityBehavior(
