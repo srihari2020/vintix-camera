@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.activity.compose.BackHandler
 import com.srihari.vintix.ui.camera.CameraScreen
 import com.srihari.vintix.ui.gallery.GalleryScreen
 import com.srihari.vintix.ui.settings.SettingsScreen
@@ -26,6 +27,10 @@ class MainActivity : ComponentActivity() {
         setContent {
             VintixTheme {
                 var currentScreen by remember { mutableStateOf(AppScreen.CAMERA) }
+
+                BackHandler(enabled = currentScreen != AppScreen.CAMERA) {
+                    currentScreen = AppScreen.CAMERA
+                }
 
                 Surface(
                     modifier = Modifier.fillMaxSize(),

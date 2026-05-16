@@ -5,6 +5,8 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
@@ -92,7 +94,10 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             quad = TexturedQuad()
             oesTextureId = createOESTexture()
             surfaceTexture = SurfaceTexture(oesTextureId)
-            surfaceTexture?.setOnFrameAvailableListener(this)
+            
+            // Use main looper to ensure callbacks fire reliably on all devices (especially OnePlus/Adreno)
+            surfaceTexture?.setOnFrameAvailableListener(this, Handler(Looper.getMainLooper()))
+            surfaceTextureReleased = false
 
             onSurfaceTextureAvailable?.invoke(surfaceTexture!!)
 
@@ -143,7 +148,7 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
 
             quad.draw(shaderProgram)
         } catch (e: Exception) {
-            // Silently ignore frame errors to maintain UI stability
+            Log.e(TAG, "Error during onDrawFrame", e)
         }
     }
 

@@ -17,6 +17,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -29,8 +31,8 @@ fun ProfileSelector(
 ) {
     LazyRow(
         modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(horizontal = 24.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         items(profiles) { profileName ->
@@ -38,20 +40,21 @@ fun ProfileSelector(
             
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RectangleShape)
                     .background(
-                        if (isSelected) MaterialTheme.colorScheme.primary 
-                        else Color.Black.copy(alpha = 0.5f)
+                        if (isSelected) Color(0xFFFF8A1F) // Vintix Accent
+                        else Color.White.copy(alpha = 0.15f)
                     )
                     .clickable { onProfileSelected(profileName) }
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = profileName,
-                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.White,
-                    fontSize = 14.sp,
-                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                    text = profileName.uppercase(),
+                    color = if (isSelected) Color.Black else Color.White,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }

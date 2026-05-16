@@ -38,9 +38,16 @@ import com.srihari.vintix.settings.withVintixSettings
 import com.srihari.vintix.telemetry.PerformanceTelemetry
 import com.srihari.vintix.BuildConfig
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -61,14 +68,17 @@ fun CameraScreen(
     val captureState by viewModel.captureState.collectAsState()
     val cameraAvailability by viewModel.cameraAvailability.collectAsState()
     val safeModeActive by viewModel.safeModeActive.collectAsState()
+    val isFrontCamera by viewModel.isFrontCamera.collectAsState()
     val retryKey by viewModel.retryKey.collectAsState()
     val appSettings by settingsViewModel.settings.collectAsState()
 
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
     var glViewRef by remember { mutableStateOf<VintixGLSurfaceView?>(null) }
     val photoCaptureManager = remember { PhotoCaptureManager(context) }
+    
+    // 90s/2000s camera sounds
     val toneGenerator = remember {
-        android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 90)
+        android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 70)
     }
     val shutterSound = remember {
         android.media.MediaActionSound().apply {
@@ -146,7 +156,7 @@ fun CameraScreen(
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         if (isCameraPermissionGranted) {
             Box(
                 modifier = Modifier.fillMaxSize(),
@@ -158,6 +168,7 @@ fun CameraScreen(
                         // --- GL PIPELINE PATH ---
                         GLPreview(
                             cameraProfile = currentProfile,
+                            isFrontCamera = isFrontCamera,
                             onCameraReady = { manager ->
                                 Log.d(TAG, "GLPreview camera ready")
                                 cameraManager = manager
@@ -196,6 +207,20 @@ fun CameraScreen(
                         }
                     )
                 }
+            }
+
+            // Top Status Overlay (Sony Cyber-shot style)
+            Column(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                StatusIndicator(text = if (isFrontCamera) "CAM: SELFIE" else "CAM: MAIN")
+                StatusIndicator(text = "ISO: AUTO")
+                StatusIndicator(text = "RES: ${if(appSettings.exportResolution == com.srihari.vintix.settings.ExportResolutionPreset.NATIVE) "FULL" else appSettings.exportResolution.label}")
+                StatusIndicator(text = "BAT: 98%")
             }
 
             // Initialization status (only shown during wakeup)
@@ -246,119 +271,131 @@ fun CameraScreen(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = 120.dp)
+                    .padding(bottom = 140.dp)
                     .fillMaxWidth()
             )
 
             val view = androidx.compose.ui.platform.LocalView.current
             val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
 
-            ShutterButton(
-                onClick = {
-                    val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
-                    if (
-                        android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE
-                        ) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        viewModel.onCaptureError("Storage permission required to save photos")
-                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                        coroutineScope.launch {
-                            kotlinx.coroutines.delay(2200)
-                            viewModel.resetCaptureState()
-                        }
-                        return@ShutterButton
-                    }
-                    val feedback = currentProfile.feedbackBehavior
+            // Bottom controls
+            Row(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
+                    .fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Settings Button (Minimalist)
+                CameraIconButton(onClick = onNavigateToSettings) {
+                    Text(
+                        text = "SET",
+                        color = Color.White,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp
+                    )
+                }
 
-                    if (feedback.hapticFeedback) {
-                        view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                    }
-                    if (feedback.soundEnabled) {
-                        if (feedback.useDigitalBeep) {
-                            toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 42)
-                        } else {
-                            shutterSound.play(android.media.MediaActionSound.SHUTTER_CLICK)
-                        }
-                    }
-
-                    // Freeze preview only when GL pipeline is active
-                    if (!safeModeActive && feedback.captureFreezeMs > 0) {
-                        glViewRef?.vintixRenderer?.freezePreview = true
-                        glViewRef?.postDelayed({
-                            glViewRef?.vintixRenderer?.freezePreview = false
-                        }, feedback.captureFreezeMs)
-                    }
-
-                    viewModel.onCaptureStarted(feedback)
-
-                    photoCaptureManager.capturePhoto(
-                        imageCapture = imageCapture,
-                        cameraProfile = currentProfile,
-                        profileName = selectedProfileName,
-                        noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
-                        timestampStyle = appSettings.timestampStyle(),
-                        onSuccess = { uri ->
-                            Log.d(TAG, "Photo saved: $uri")
-                            viewModel.onPhotoCaptured(uri)
-                            coroutineScope.launch {
-                                kotlinx.coroutines.delay(100)
-                                viewModel.resetCaptureState()
-                            }
-                        },
-                        onError = { exception ->
-                            Log.e(TAG, "Capture failed", exception)
-                            viewModel.onCaptureError(
-                                exception.message ?: "Unknown capture error"
-                            )
+                // Shutter
+                ShutterButton(
+                    onClick = {
+                        val imageCapture = cameraManager?.imageCapture ?: return@ShutterButton
+                        if (
+                            android.os.Build.VERSION.SDK_INT <= android.os.Build.VERSION_CODES.P &&
+                            ContextCompat.checkSelfPermission(
+                                context,
+                                Manifest.permission.WRITE_EXTERNAL_STORAGE
+                            ) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            viewModel.onCaptureError("Storage permission required to save photos")
+                            storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                             coroutineScope.launch {
                                 kotlinx.coroutines.delay(2200)
                                 viewModel.resetCaptureState()
                             }
+                            return@ShutterButton
                         }
-                    )
-                },
-                enabled = cameraManager?.imageCapture != null &&
-                    captureState !is CaptureState.Capturing &&
-                    cameraAvailability is CameraAvailability.Ready,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .navigationBarsPadding()
-                    .padding(bottom = 32.dp)
-            )
+                        val feedback = currentProfile.feedbackBehavior
 
-            androidx.compose.material3.TextButton(
-                onClick = onNavigateToSettings,
-                modifier = Modifier
-                    .align(Alignment.BottomStart)
-                    .navigationBarsPadding()
-                    .padding(bottom = 32.dp, start = 16.dp)
-            ) {
-                Text(
-                    text = "SETTINGS",
-                    color = androidx.compose.ui.graphics.Color.White,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
+                        if (feedback.hapticFeedback) {
+                            view.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                        }
+                        if (feedback.soundEnabled) {
+                            if (feedback.useDigitalBeep) {
+                                toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 50)
+                            } else {
+                                shutterSound.play(android.media.MediaActionSound.SHUTTER_CLICK)
+                            }
+                        }
 
-            androidx.compose.material3.TextButton(
-                onClick = onNavigateToGallery,
-                modifier = Modifier
-                    .align(Alignment.BottomEnd)
-                    .navigationBarsPadding()
-                    .padding(bottom = 32.dp, end = 16.dp)
-            ) {
-                Text(
-                    text = "GALLERY",
-                    color = androidx.compose.ui.graphics.Color.White,
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                    fontSize = 14.sp
+                        // Freeze preview only when GL pipeline is active
+                        if (!safeModeActive && feedback.captureFreezeMs > 0) {
+                            glViewRef?.vintixRenderer?.freezePreview = true
+                            glViewRef?.postDelayed({
+                                glViewRef?.vintixRenderer?.freezePreview = false
+                            }, feedback.captureFreezeMs)
+                        }
+
+                        viewModel.onCaptureStarted(feedback)
+
+                        photoCaptureManager.capturePhoto(
+                            imageCapture = imageCapture,
+                            cameraProfile = currentProfile,
+                            profileName = selectedProfileName,
+                            noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
+                            timestampStyle = appSettings.timestampStyle(),
+                            onSuccess = { uri ->
+                                Log.d(TAG, "Photo saved: $uri")
+                                viewModel.onPhotoCaptured(uri)
+                                coroutineScope.launch {
+                                    kotlinx.coroutines.delay(100)
+                                    viewModel.resetCaptureState()
+                                }
+                            },
+                            onError = { exception ->
+                                Log.e(TAG, "Capture failed", exception)
+                                viewModel.onCaptureError(
+                                    exception.message ?: "Unknown capture error"
+                                )
+                                coroutineScope.launch {
+                                    kotlinx.coroutines.delay(2200)
+                                    viewModel.resetCaptureState()
+                                }
+                            }
+                        )
+                    },
+                    enabled = cameraManager?.imageCapture != null &&
+                        captureState !is CaptureState.Capturing &&
+                        cameraAvailability is CameraAvailability.Ready
                 )
+
+                // Gallery/Switch Column
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    CameraIconButton(onClick = onNavigateToGallery) {
+                        Text(
+                            text = "GAL",
+                            color = Color.White,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.height(8.dp))
+                    
+                    CameraIconButton(onClick = { viewModel.toggleCamera() }) {
+                        Text(
+                            text = "SWP",
+                            color = Color(0xFFFFC107), // Amber for camera switch
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             }
         } else {
             Column(
@@ -384,6 +421,32 @@ fun CameraScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun StatusIndicator(text: String) {
+    Text(
+        text = text.uppercase(),
+        color = Color(0xFF00FF00).copy(alpha = 0.8f), // Retro green matrix style
+        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+        fontSize = 10.sp,
+        letterSpacing = 0.5.sp,
+        modifier = Modifier
+            .background(Color.Black.copy(alpha = 0.4f))
+            .padding(horizontal = 4.dp, vertical = 2.dp)
+    )
+}
+
+@Composable
+private fun CameraIconButton(onClick: () -> Unit, content: @Composable () -> Unit) {
+    Box(
+        modifier = Modifier
+            .size(48.dp)
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) {
+        content()
     }
 }
 

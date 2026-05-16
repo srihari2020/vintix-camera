@@ -51,6 +51,7 @@ private const val CAMERA_START_TIMEOUT_MS = 12_000L
 fun GLPreview(
     modifier: Modifier = Modifier,
     cameraProfile: CameraProfile = CameraProfile.Default,
+    isFrontCamera: Boolean = false,
     onCameraReady: (CameraManager) -> Unit = {},
     onGlViewReady: (VintixGLSurfaceView) -> Unit = {},
     onCameraError: (Throwable) -> Unit = {},
@@ -62,6 +63,15 @@ fun GLPreview(
     val scope = rememberCoroutineScope()
     val activeSurface = remember { AtomicReference<Surface?>() }
     val isDisposed = remember { AtomicBoolean(false) }
+
+    // Re-bind camera when lens facing changes
+    LaunchedEffect(isFrontCamera) {
+        val surface = activeSurface.get()
+        if (surface != null && !isDisposed.get()) {
+            Log.d(TAG, "Lens facing changed to ${if (isFrontCamera) "FRONT" else "BACK"} — toggling camera")
+            cameraManager.toggleCamera(lifecycleOwner, surface = surface)
+        }
+    }
 
     val glSurfaceView = remember {
         VintixGLSurfaceView(context).apply {

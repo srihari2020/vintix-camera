@@ -62,18 +62,9 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .heightIn(min = 64.dp),
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.End
         ) {
-            TextButton(onClick = onNavigateBack) {
-                Text(
-                    text = "CAMERA",
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-            Spacer(modifier = Modifier.weight(1f))
             Text(
                 text = "VINTIX",
                 color = Accent,

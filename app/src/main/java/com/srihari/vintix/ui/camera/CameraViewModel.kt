@@ -45,6 +45,9 @@ class CameraViewModel : ViewModel() {
     private val _retryKey = MutableStateFlow(0)
     val retryKey: StateFlow<Int> = _retryKey.asStateFlow()
 
+    private val _isFrontCamera = MutableStateFlow(false)
+    val isFrontCamera: StateFlow<Boolean> = _isFrontCamera.asStateFlow()
+
     fun onPermissionResult(isGranted: Boolean) {
         _isCameraPermissionGranted.value = isGranted
         if (isGranted) {
@@ -92,6 +95,11 @@ class CameraViewModel : ViewModel() {
         Log.d(TAG, "Retrying camera — resetting to Initializing")
         _cameraAvailability.value = CameraAvailability.Initializing
         _retryKey.value++
+    }
+
+    fun toggleCamera() {
+        _isFrontCamera.value = !_isFrontCamera.value
+        _cameraAvailability.value = CameraAvailability.Initializing
     }
 
     fun resetCaptureState() {

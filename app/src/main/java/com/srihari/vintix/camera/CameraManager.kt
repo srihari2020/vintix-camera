@@ -13,7 +13,9 @@ import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -29,6 +31,7 @@ class CameraManager(private val context: Context) {
 
     private var cameraProvider: ProcessCameraProvider? = null
     private var previewUseCase: Preview? = null
+    private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
 
     /** Guards against duplicate bindToLifecycle calls. */
     @Volatile
@@ -41,6 +44,24 @@ class CameraManager(private val context: Context) {
     var imageCapture: ImageCapture? = null
         private set
 
+    fun toggleCamera(lifecycleOwner: LifecycleOwner, surface: Surface? = null, surfaceProvider: Preview.SurfaceProvider? = null) {
+        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
+            CameraSelector.LENS_FACING_FRONT
+        } else {
+            CameraSelector.LENS_FACING_BACK
+        }
+        
+        runOnMain {
+            lifecycleOwner.lifecycleScope.launch {
+                if (surface != null) {
+                    startCamera(lifecycleOwner, surface)
+                } else if (surfaceProvider != null) {
+                    startCamera(lifecycleOwner, surfaceProvider)
+                }
+            }
+        }
+    }
+
     /**
      * Starts camera with a standard CameraX SurfaceProvider.
      * Used by [CameraPreview] composable (PreviewView-based).
@@ -49,7 +70,7 @@ class CameraManager(private val context: Context) {
         lifecycleOwner: LifecycleOwner,
         surfaceProvider: Preview.SurfaceProvider
     ) {
-        Log.d(TAG, "startCamera(SurfaceProvider) — requesting CameraProvider")
+        Log.d(TAG, "startCamera(SurfaceProvider, facing=$lensFacing) — requesting CameraProvider")
 
         val provider = getTimedCameraProvider()
         if (provider == null) {
@@ -72,7 +93,9 @@ class CameraManager(private val context: Context) {
             .setTargetRotation(rotation)
             .build()
 
-        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+        val cameraSelector = CameraSelector.Builder()
+            .requireLensFacing(lensFacing)
+            .build()
 
         withContext(Dispatchers.Main) {
             try {
@@ -112,7 +135,7 @@ class CameraManager(private val context: Context) {
         lifecycleOwner: LifecycleOwner,
         surface: Surface
     ) {
-        Log.d(TAG, "startCamera(Surface) — requesting CameraProvider")
+        Log.d(TAG, "startCamera(Surface, facing=$lensFacing) — requesting CameraProvider")
 
         val provider = getTimedCameraProvider()
         if (provider == null) {
@@ -143,7 +166,9 @@ class CameraManager(private val context: Context) {
             .setTargetRotation(rotation)
             .build()
 
-        val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
+        val cameraSelector = CameraSelector.Builder()
+            .requireLensFacing(lensFacing)
+            .build()
 
         withContext(Dispatchers.Main) {
             try {

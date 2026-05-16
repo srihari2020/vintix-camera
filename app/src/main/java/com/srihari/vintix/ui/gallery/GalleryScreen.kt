@@ -56,22 +56,6 @@ fun GalleryScreen(
                 color = Color.White.copy(alpha = 0.5f),
                 modifier = Modifier.align(Alignment.Center)
             )
-            
-            TextButton(
-                onClick = onNavigateBack,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .padding(16.dp)
-                    .statusBarsPadding()
-            ) {
-                Text(
-                    text = "[ BACK ]",
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
             return
         }
 
@@ -118,19 +102,9 @@ fun GalleryScreen(
                 .background(Color.Black.copy(alpha = 0.4f))
                 .statusBarsPadding()
                 .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(onClick = onNavigateBack) {
-                Text(
-                    text = "[ BACK ]",
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
-                )
-            }
-
             TextButton(
                 onClick = {
                     val currentPhoto = photos.getOrNull(pagerState.currentPage) ?: return@TextButton
