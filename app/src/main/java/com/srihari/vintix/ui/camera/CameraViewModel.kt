@@ -75,13 +75,12 @@ class CameraViewModel : ViewModel() {
     }
 
     /**
-     * Called when the GL pipeline fails. Activates safe mode so subsequent
-     * compositions (including after config changes) use CameraPreview.
+     * Called when the GL pipeline fails. Activates safe mode silently.
      */
     fun activateSafeMode(reason: String) {
-        Log.w(TAG, "Activating SAFE MODE: $reason")
+        Log.w(TAG, "Activating SILENT SAFE MODE: $reason")
         _safeModeActive.value = true
-        // Reset to Initializing so CameraPreview gets a clean start
+        // Keep camera availability as is, or reset if needed for PreviewView
         _cameraAvailability.value = CameraAvailability.Initializing
     }
 

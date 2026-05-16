@@ -106,27 +106,12 @@ class PhotoCaptureManager(private val context: Context) {
                         val croppedAndScaled = applyCropAndScale(oriented, captureProfile)
                         if (oriented !== croppedAndScaled) oriented.recycle()
                         
-                        val leakConfig = captureProfile.lightLeakBehavior
-                        if (leakConfig.probability > 0f && Math.random() < leakConfig.probability) {
-                            leakIntensity = leakConfig.maxIntensity * (0.6f + 0.4f * Math.random().toFloat())
-                            val edge = (Math.random() * 4).toInt()
-                            when (edge) {
-                                0 -> { leakOriginX = -0.1f - Math.random().toFloat() * 0.2f; leakOriginY = Math.random().toFloat() }
-                                1 -> { leakOriginX = 1.1f + Math.random().toFloat() * 0.2f; leakOriginY = Math.random().toFloat() }
-                                2 -> { leakOriginX = Math.random().toFloat(); leakOriginY = -0.1f - Math.random().toFloat() * 0.2f }
-                                3 -> { leakOriginX = Math.random().toFloat(); leakOriginY = 1.1f + Math.random().toFloat() * 0.2f }
-                            }
-                        }
-                        
                         val procStartNs = System.nanoTime()
                         var processed = try {
                             RetroPhotoGlPipeline.processBitmap(
                                 croppedAndScaled,
                                 captureProfile,
-                                noisePhase,
-                                leakIntensity,
-                                leakOriginX,
-                                leakOriginY
+                                noisePhase
                             )
                         } finally {
                             if (!croppedAndScaled.isRecycled) croppedAndScaled.recycle()

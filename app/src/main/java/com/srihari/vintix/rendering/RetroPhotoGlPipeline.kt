@@ -13,11 +13,8 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * Offscreen OpenGL ES 2.0 path: runs the same retro fragment pipeline as preview
- * ([RetroPipelineShaders.fragmentShaderTexture2d]) into an FBO, then reads RGBA into a [Bitmap].
- *
- * Uses a dedicated EGL context (pbuffer surface) so work never touches the preview [GLSurfaceView].
- * Intended for still export; a future HQ path can add multisample / float FBOs behind this API.
+ * Offscreen OpenGL ES 2.0 path for still photo export.
+ * Shared ONE unified shader with the live preview.
  */
 class RetroPhotoGlPipeline private constructor() {
 
@@ -43,10 +40,7 @@ class RetroPhotoGlPipeline private constructor() {
     fun process(
         source: Bitmap, 
         profile: CameraProfile, 
-        noisePhase: Float,
-        leakIntensity: Float = 0f,
-        leakOriginX: Float = 0f,
-        leakOriginY: Float = 0f
+        noisePhase: Float
     ): Bitmap {
         val w0 = source.width
         val h0 = source.height
@@ -64,7 +58,6 @@ class RetroPhotoGlPipeline private constructor() {
             val scale = (maxTex.toFloat() / w0).coerceAtMost(maxTex.toFloat() / h0)
             val nw = (w0 * scale).toInt().coerceAtLeast(1)
             val nh = (h0 * scale).toInt().coerceAtLeast(1)
-            Log.w(TAG, "Bitmap ${w0}x$h0 exceeds GL_MAX_TEXTURE_SIZE=$maxTex; scaling to ${nw}x$nh")
             Bitmap.createScaledBitmap(source, nw, nh, true)
         } else {
             source
@@ -88,23 +81,13 @@ class RetroPhotoGlPipeline private constructor() {
 
             val program = shaderProgram!!
             program.use()
-            profileUniforms!!.upload(
-                profile, 
-                noisePhase, 
-                true, 
-                leakIntensity, 
-                leakOriginX, 
-                leakOriginY,
-                width = w.toFloat(),
-                height = h.toFloat()
-            )
+            profileUniforms!!.upload(profile, noisePhase)
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTextureId)
             if (uTextureLoc >= 0) GLES20.glUniform1i(uTextureLoc, 0)
 
             quad.draw(program)
-
             GLES20.glFinish()
 
             val buf = ensureReadBuffer(w, h)
@@ -121,10 +104,7 @@ class RetroPhotoGlPipeline private constructor() {
     }
 
     fun release() {
-        if (eglDisplay != EGL14.EGL_NO_DISPLAY &&
-            eglSurface != EGL14.EGL_NO_SURFACE &&
-            eglContext != EGL14.EGL_NO_CONTEXT
-        ) {
+        if (eglDisplay != EGL14.EGL_NO_DISPLAY && eglSurface != EGL14.EGL_NO_SURFACE) {
             EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
         }
         releaseOutputTarget()
@@ -132,99 +112,42 @@ class RetroPhotoGlPipeline private constructor() {
         shaderProgram?.release()
         shaderProgram = null
         profileUniforms = null
-        uTextureLoc = -1
         destroyEgl()
         initialized = false
     }
 
     private fun ensureEglAndProgram() {
         if (initialized) {
-            if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-                return
-            }
-            Log.w(TAG, "Lost EGL current context; rebuilding export pipeline")
+            if (EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) return
             forgetGlObjects()
             destroyEgl()
-            initialized = false
         }
 
         eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-        if (eglDisplay == EGL14.EGL_NO_DISPLAY) {
-            throw IllegalStateException("Unable to get EGL14 display")
-        }
-        val version = IntArray(2)
-        if (!EGL14.eglInitialize(eglDisplay, version, 0, version, 1)) {
-            throw IllegalStateException("Unable to initialize EGL14")
-        }
+        EGL14.eglInitialize(eglDisplay, IntArray(2), 0, IntArray(2), 1)
 
         val attribList = intArrayOf(
-            EGL14.EGL_COLOR_BUFFER_TYPE, EGL14.EGL_RGB_BUFFER,
-            EGL14.EGL_RED_SIZE, 8,
-            EGL14.EGL_GREEN_SIZE, 8,
-            EGL14.EGL_BLUE_SIZE, 8,
-            EGL14.EGL_ALPHA_SIZE, 8,
+            EGL14.EGL_RED_SIZE, 8, EGL14.EGL_GREEN_SIZE, 8, EGL14.EGL_BLUE_SIZE, 8, EGL14.EGL_ALPHA_SIZE, 8,
             EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
-            EGL14.EGL_NONE
+            EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT, EGL14.EGL_NONE
         )
         val configs = arrayOfNulls<EGLConfig>(1)
-        val numConfig = IntArray(1)
-        if (!EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, numConfig, 0) || numConfig[0] == 0) {
-            throw IllegalStateException("Unable to choose EGL config")
-        }
+        EGL14.eglChooseConfig(eglDisplay, attribList, 0, configs, 0, 1, IntArray(1), 0)
         eglConfig = configs[0]
 
         val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
         eglContext = EGL14.eglCreateContext(eglDisplay, eglConfig, EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
-        if (eglContext == EGL14.EGL_NO_CONTEXT) {
-            throw IllegalStateException("Unable to create EGL context")
-        }
+        eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
+        EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
 
-        val surfAttribs = intArrayOf(
-            EGL14.EGL_WIDTH, 1,
-            EGL14.EGL_HEIGHT, 1,
-            EGL14.EGL_NONE
-        )
-        eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglConfig, surfAttribs, 0)
-        if (eglSurface == EGL14.EGL_NO_SURFACE) {
-            throw IllegalStateException("Unable to create EGL pbuffer surface")
-        }
-        if (!EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)) {
-            throw IllegalStateException("Unable to eglMakeCurrent")
-        }
+        val sp = ShaderProgram()
+        val vs = sp.compile(GLES20.GL_VERTEX_SHADER, RetroPipelineShaders.PHOTO_VERTEX_SHADER)
+        val fs = sp.compile(GLES20.GL_FRAGMENT_SHADER, RetroPipelineShaders.fragmentShaderTexture2d())
+        if (vs == 0 || fs == 0 || !sp.link(vs, fs)) throw IllegalStateException("Export shader failed")
 
-        // Try compiling shaders with graceful degradation
-        val levels = listOf(
-            RetroPipelineShaders.ShaderLevel.FULL,
-            RetroPipelineShaders.ShaderLevel.MEDIUM,
-            RetroPipelineShaders.ShaderLevel.MINIMAL
-        )
-
-        var success = false
-        for (level in levels) {
-            Log.i(TAG, "Attempting to initialize photo pipeline with shader level: $level")
-            val sp = ShaderProgram()
-            val vs = sp.compile(GLES20.GL_VERTEX_SHADER, RetroPipelineShaders.PHOTO_VERTEX_SHADER.trimIndent())
-            val fs = sp.compile(GLES20.GL_FRAGMENT_SHADER, RetroPipelineShaders.fragmentShaderTexture2d(level))
-            
-            if (vs != 0 && fs != 0 && sp.link(vs, fs)) {
-                Log.i(TAG, "Successfully initialized photo pipeline with level: $level")
-                shaderProgram = sp
-                success = true
-                break
-            } else {
-                Log.w(TAG, "Photo level $level failed, falling back...")
-                sp.release()
-            }
-        }
-
-        if (!success) {
-            throw IllegalStateException("All photo retro shader levels failed to compile or link")
-        }
-        
-        profileUniforms = CameraProfileUniformHandles(shaderProgram!!)
-        uTextureLoc = shaderProgram!!.getUniformLocation("uTexture")
-
+        shaderProgram = sp
+        profileUniforms = CameraProfileUniformHandles(sp)
+        uTextureLoc = sp.getUniformLocation("uTexture")
         initialized = true
     }
 
@@ -239,74 +162,30 @@ class RetroPhotoGlPipeline private constructor() {
     }
 
     private fun ensureOutputTarget(width: Int, height: Int) {
-        if (
-            outputTextureId != 0 &&
-            frameBufferId != 0 &&
-            outputWidth == width &&
-            outputHeight == height
-        ) {
-            return
-        }
-
+        if (outputTextureId != 0 && outputWidth == width && outputHeight == height) return
         releaseOutputTarget()
-
         outputTextureId = genTexture()
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, outputTextureId)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-        GLES20.glTexImage2D(
-            GLES20.GL_TEXTURE_2D,
-            0,
-            GLES20.GL_RGBA,
-            width,
-            height,
-            0,
-            GLES20.GL_RGBA,
-            GLES20.GL_UNSIGNED_BYTE,
-            null
-        )
-
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, width, height, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
         val fbo = IntArray(1)
         GLES20.glGenFramebuffers(1, fbo, 0)
         frameBufferId = fbo[0]
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, frameBufferId)
-        GLES20.glFramebufferTexture2D(
-            GLES20.GL_FRAMEBUFFER,
-            GLES20.GL_COLOR_ATTACHMENT0,
-            GLES20.GL_TEXTURE_2D,
-            outputTextureId,
-            0
-        )
-        val status = GLES20.glCheckFramebufferStatus(GLES20.GL_FRAMEBUFFER)
-        if (status != GLES20.GL_FRAMEBUFFER_COMPLETE) {
-            releaseOutputTarget()
-            throw IllegalStateException("Framebuffer incomplete: $status")
-        }
-
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, outputTextureId, 0)
         outputWidth = width
         outputHeight = height
     }
 
     private fun ensureReadBuffer(width: Int, height: Int): ByteBuffer {
-        val requiredBytes = width * height * 4
-        val buffer = readBuffer
-        if (buffer == null || buffer.capacity() < requiredBytes) {
-            readBuffer = ByteBuffer.allocateDirect(requiredBytes).order(ByteOrder.nativeOrder())
+        val bytes = width * height * 4
+        if (readBuffer == null || readBuffer!!.capacity() < bytes) {
+            readBuffer = ByteBuffer.allocateDirect(bytes).order(ByteOrder.nativeOrder())
         }
-        return readBuffer!!.apply {
-            clear()
-            limit(requiredBytes)
-        }
+        return readBuffer!!.apply { clear(); limit(bytes) }
     }
 
     private fun copyReadBufferToBitmap(buffer: ByteBuffer, width: Int, height: Int, output: Bitmap) {
-        val requiredPixels = width * height
-        if (pixelBuffer.size < requiredPixels) {
-            pixelBuffer = IntArray(requiredPixels)
-        }
-
+        if (pixelBuffer.size < width * height) pixelBuffer = IntArray(width * height)
         val rowBytes = width * 4
         var target = 0
         for (y in 0 until height) {
@@ -316,8 +195,7 @@ class RetroPhotoGlPipeline private constructor() {
                 val g = buffer.get(source + 1).toInt() and 0xFF
                 val b = buffer.get(source + 2).toInt() and 0xFF
                 val a = buffer.get(source + 3).toInt() and 0xFF
-                pixelBuffer[target] = (a shl 24) or (r shl 16) or (g shl 8) or b
-                target++
+                pixelBuffer[target++] = (a shl 24) or (r shl 16) or (g shl 8) or b
                 source += 4
             }
         }
@@ -325,52 +203,30 @@ class RetroPhotoGlPipeline private constructor() {
     }
 
     private fun releaseInputTexture() {
-        if (inputTextureId != 0) {
-            GLES20.glDeleteTextures(1, intArrayOf(inputTextureId), 0)
-            inputTextureId = 0
-        }
+        if (inputTextureId != 0) GLES20.glDeleteTextures(1, intArrayOf(inputTextureId), 0)
+        inputTextureId = 0
     }
 
     private fun releaseOutputTarget() {
-        if (frameBufferId != 0) {
-            GLES20.glDeleteFramebuffers(1, intArrayOf(frameBufferId), 0)
-            frameBufferId = 0
-        }
-        if (outputTextureId != 0) {
-            GLES20.glDeleteTextures(1, intArrayOf(outputTextureId), 0)
-            outputTextureId = 0
-        }
-        outputWidth = 0
-        outputHeight = 0
+        if (frameBufferId != 0) GLES20.glDeleteFramebuffers(1, intArrayOf(frameBufferId), 0)
+        if (outputTextureId != 0) GLES20.glDeleteTextures(1, intArrayOf(outputTextureId), 0)
+        frameBufferId = 0
+        outputTextureId = 0
     }
 
     private fun forgetGlObjects() {
         shaderProgram = null
         profileUniforms = null
-        uTextureLoc = -1
         inputTextureId = 0
         outputTextureId = 0
         frameBufferId = 0
-        outputWidth = 0
-        outputHeight = 0
     }
 
     private fun destroyEgl() {
         if (eglDisplay != EGL14.EGL_NO_DISPLAY) {
-            EGL14.eglMakeCurrent(
-                eglDisplay,
-                EGL14.EGL_NO_SURFACE,
-                EGL14.EGL_NO_SURFACE,
-                EGL14.EGL_NO_CONTEXT
-            )
-            if (eglSurface != EGL14.EGL_NO_SURFACE) {
-                EGL14.eglDestroySurface(eglDisplay, eglSurface)
-                eglSurface = EGL14.EGL_NO_SURFACE
-            }
-            if (eglContext != EGL14.EGL_NO_CONTEXT) {
-                EGL14.eglDestroyContext(eglDisplay, eglContext)
-                eglContext = EGL14.EGL_NO_CONTEXT
-            }
+            EGL14.eglMakeCurrent(eglDisplay, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_SURFACE, EGL14.EGL_NO_CONTEXT)
+            if (eglSurface != EGL14.EGL_NO_SURFACE) EGL14.eglDestroySurface(eglDisplay, eglSurface)
+            if (eglContext != EGL14.EGL_NO_CONTEXT) EGL14.eglDestroyContext(eglDisplay, eglContext)
             EGL14.eglTerminate(eglDisplay)
             eglDisplay = EGL14.EGL_NO_DISPLAY
         }
@@ -381,32 +237,15 @@ class RetroPhotoGlPipeline private constructor() {
         private val globalLock = Any()
         private var instance: RetroPhotoGlPipeline? = null
 
-        /**
-         * Processes [source] through the retro pipeline. Caller must not use OpenGL on the same
-         * thread concurrently with other EGL contexts unless this is the only GLES work on the thread.
-         */
-        fun processBitmap(
-            source: Bitmap, 
-            profile: CameraProfile, 
-            noisePhase: Float,
-            leakIntensity: Float = 0f,
-            leakOriginX: Float = 0f,
-            leakOriginY: Float = 0f
-        ): Bitmap {
+        fun processBitmap(source: Bitmap, profile: CameraProfile, noisePhase: Float): Bitmap {
             synchronized(globalLock) {
-                if (instance == null) {
-                    instance = RetroPhotoGlPipeline()
-                }
-                return instance!!.process(source, profile, noisePhase, leakIntensity, leakOriginX, leakOriginY)
+                if (instance == null) instance = RetroPhotoGlPipeline()
+                return instance!!.process(source, profile, noisePhase)
             }
         }
 
-        /** Releases global EGL + shader resources (e.g. on app shutdown or tests). */
         fun releaseShared() {
-            synchronized(globalLock) {
-                instance?.release()
-                instance = null
-            }
+            synchronized(globalLock) { instance?.release(); instance = null }
         }
     }
 }

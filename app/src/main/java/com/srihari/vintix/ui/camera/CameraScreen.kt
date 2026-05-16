@@ -165,24 +165,23 @@ fun CameraScreen(
                             },
                             onGlViewReady = { glViewRef = it },
                             onCameraError = { throwable ->
-                                Log.e(TAG, "GLPreview error", throwable)
+                                Log.e(TAG, "GLPreview error — falling back to standard preview", throwable)
                                 glViewRef = null
                                 cameraManager = null
-                                viewModel.onCameraError("GL Pipeline Failed: ${throwable.message}")
+                                viewModel.activateSafeMode("GL Pipeline Failed: ${throwable.message}")
                             }
                         )
                     } else {
-                        // --- SAFE MODE: CameraPreview (PreviewView) ---
+                        // --- FALLBACK: Standard CameraPreview ---
                         androidx.compose.runtime.key(retryKey) {
                             CameraPreview(
                                 onCameraReady = { manager ->
-                                    Log.d(TAG, "CameraPreview camera ready (safe mode)")
                                     cameraManager = manager
                                     viewModel.onCameraReady()
                                 },
                                 onCameraError = { throwable ->
-                                    Log.e(TAG, "CameraPreview error", throwable)
-                                    viewModel.onCameraError("Safe Mode Failed: ${throwable.message}")
+                                    Log.e(TAG, "Fallback CameraPreview error", throwable)
+                                    viewModel.onCameraError("Camera Failed: ${throwable.message}")
                                 }
                             )
                         }
@@ -199,81 +198,34 @@ fun CameraScreen(
                 }
             }
 
-            if (BuildConfig.TELEMETRY_ENABLED) {
-                TelemetryOverlay(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding())
-            }
-
-            // Safe mode indicator
-            if (safeModeActive) {
+            // Initialization status (only shown during wakeup)
+            if (cameraAvailability is CameraAvailability.Initializing) {
                 CameraStatusOverlay(
-                    text = "SAFE MODE",
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .statusBarsPadding()
-                        .padding(top = 8.dp, end = 8.dp)
-                )
-            }
-
-            // Debug diagnostics — only in debug builds
-            if (BuildConfig.TELEMETRY_ENABLED) {
-                DiagnosticsOverlay(
-                    safeModeActive = safeModeActive,
-                    cameraAvailability = cameraAvailability,
-                    cameraBound = cameraManager?.imageCapture != null,
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .statusBarsPadding()
-                        .padding(top = 120.dp, start = 8.dp)
-                )
-            }
-
-            when (val availability = cameraAvailability) {
-                CameraAvailability.Initializing -> CameraStatusOverlay(
                     text = "WAKING CAMERA",
                     modifier = Modifier.align(Alignment.Center)
                 )
-                is CameraAvailability.Error -> {
-                    // Show error + manual retry buttons instead of dead black UI
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
+            }
+
+            // Error state (only for real camera failures)
+            if (cameraAvailability is CameraAvailability.Error) {
+                Column(
+                    modifier = Modifier.align(Alignment.Center),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    val error = cameraAvailability as CameraAvailability.Error
+                    CameraStatusOverlay(text = error.message)
+                    androidx.compose.material3.TextButton(
+                        onClick = { viewModel.retryCamera() }
                     ) {
-                        CameraStatusOverlay(text = availability.message)
-                        androidx.compose.material3.TextButton(
-                            onClick = {
-                                Log.d(TAG, "RETRY tapped — resetting camera state")
-                                cameraManager = null
-                                viewModel.retryCamera()
-                            }
-                        ) {
-                            Text(
-                                text = "RETRY",
-                                color = Color.White,
-                                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                fontSize = 16.sp
-                            )
-                        }
-                        if (!safeModeActive) {
-                            androidx.compose.material3.TextButton(
-                                onClick = {
-                                    Log.d(TAG, "SAFE MODE tapped")
-                                    cameraManager = null
-                                    viewModel.activateSafeMode("User activated safe mode")
-                                }
-                            ) {
-                                Text(
-                                    text = "ENTER SAFE MODE",
-                                    color = Color.Yellow,
-                                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                                    fontSize = 14.sp
-                                )
-                            }
-                        }
+                        Text(
+                            text = "RETRY",
+                            color = Color.White,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                            fontSize = 16.sp
+                        )
                     }
                 }
-                CameraAvailability.Ready -> Unit
             }
 
             val captureError = captureState as? CaptureState.Error
@@ -435,42 +387,6 @@ fun CameraScreen(
     }
 }
 
-/**
- * Debug-only diagnostics overlay — shows camera pipeline state
- * at a glance for on-device debugging.
- * Only visible when [BuildConfig.TELEMETRY_ENABLED] is true (debug builds).
- */
-@Composable
-private fun DiagnosticsOverlay(
-    safeModeActive: Boolean,
-    cameraAvailability: CameraAvailability,
-    cameraBound: Boolean,
-    modifier: Modifier = Modifier,
-) {
-    val mode = if (safeModeActive) "SAFE" else "GL"
-    val availability = when (cameraAvailability) {
-        CameraAvailability.Initializing -> "INIT"
-        CameraAvailability.Ready -> "READY"
-        is CameraAvailability.Error -> "ERR"
-    }
-    val bound = if (cameraBound) "YES" else "NO"
-
-    Column(
-        modifier = modifier
-            .background(Color.Black.copy(alpha = 0.55f))
-            .padding(8.dp)
-    ) {
-        val style = androidx.compose.ui.text.TextStyle(
-            color = Color.Yellow,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            fontSize = 9.sp
-        )
-        Text("MODE: $mode", style = style)
-        Text("CAM: $availability", style = style)
-        Text("BOUND: $bound", style = style)
-    }
-}
-
 @Composable
 private fun CameraStatusOverlay(text: String, modifier: Modifier = Modifier) {
     Text(
@@ -483,31 +399,4 @@ private fun CameraStatusOverlay(text: String, modifier: Modifier = Modifier) {
             .background(Color.Black.copy(alpha = 0.62f))
             .padding(horizontal = 14.dp, vertical = 8.dp)
     )
-}
-
-@Composable
-fun TelemetryOverlay(modifier: Modifier = Modifier) {
-    val fps by PerformanceTelemetry.fps.collectAsState()
-    val glRenderTimeMs by PerformanceTelemetry.glRenderTimeMs.collectAsState()
-    val exportTimeMs by PerformanceTelemetry.exportTimeMs.collectAsState()
-    val processingTimeMs by PerformanceTelemetry.processingTimeMs.collectAsState()
-    val memoryUsageMb by PerformanceTelemetry.memoryUsageMb.collectAsState()
-
-    Column(
-        modifier = modifier
-            .padding(8.dp)
-            .background(Color.Black.copy(alpha = 0.5f))
-            .padding(8.dp)
-    ) {
-        val textStyle = androidx.compose.ui.text.TextStyle(
-            color = Color.Green,
-            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            fontSize = 10.sp
-        )
-        Text("FPS: $fps", style = textStyle)
-        Text("GL: ${String.format("%.1f", glRenderTimeMs)} ms", style = textStyle)
-        Text("Export: $exportTimeMs ms", style = textStyle)
-        Text("Proc: $processingTimeMs ms", style = textStyle)
-        Text("Mem: $memoryUsageMb MB", style = textStyle)
-    }
 }
