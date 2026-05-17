@@ -36,31 +36,32 @@ object RetroPipelineShaders {
             vec3 vnx_vintage_color_science(vec3 c) {
                 float y = vnx_luma(c);
                 
-                // Optimized CCD color shifts - less "perfect" than modern sensors
-                // Shifts towards cyan/magenta in certain exposures
-                vec3 shadowShift = vec3(1.05, 0.9, 1.15); // Purple-ish shadows
-                vec3 midShift = vec3(0.95, 1.05, 0.9); // Greenish-cyan mids
-                vec3 highShift = vec3(1.1, 1.0, 0.85); // Warm yellow highlights
+                // Authentic CCD Color Science: Shifts towards cyan/magenta in mid-tones
+                // Shadows: Purple-ish tint (dirty blacks)
+                vec3 shadowShift = vec3(1.1, 0.9, 1.15); 
+                // Mids: Greenish-cyan (early digital look)
+                vec3 midShift = vec3(0.9, 1.1, 0.95); 
+                // Highlights: Warm yellow-orange (nostalgic warmth)
+                vec3 highShift = vec3(1.15, 1.05, 0.8); 
                 
-                vec3 warmTint = vec3(1.0 + uWarmth * 0.15, 1.0 + uWarmth * 0.08, 1.0 - uWarmth * 0.1);
+                vec3 warmTint = vec3(1.0 + uWarmth * 0.18, 1.0 + uWarmth * 0.08, 1.0 - uWarmth * 0.12);
                 c *= warmTint;
 
-                vec3 shifted = mix(c * shadowShift, c * midShift, smoothstep(-0.1, 0.5, y));
-                shifted = mix(shifted, c * highShift, smoothstep(0.4, 0.98, y));
+                vec3 shifted = mix(c * shadowShift, c * midShift, smoothstep(-0.15, 0.55, y));
+                shifted = mix(shifted, c * highShift, smoothstep(0.45, 1.0, y));
                 
-                // Highlight blooming/clipping - simulating sensor overflow
-                // Real CCDs have very harsh highlight clipping
-                float threshold = 0.9 - (0.15 * uHighlightHarshness);
-                float bloom = smoothstep(threshold, 1.05, y);
-                shifted = mix(shifted, vec3(1.0, 0.99, 0.98) * 1.1, bloom);
+                // Highlight blooming/halation - simulating sensor well overflow
+                float threshold = 0.88 - (0.18 * uHighlightHarshness);
+                float bloom = smoothstep(threshold, 1.08, y);
+                shifted = mix(shifted, vec3(1.0, 0.99, 0.97) * 1.12, bloom);
                 
-                // Dirty shadow crush - low dynamic range
-                float crush = uShadowCrush * 0.3;
+                // Dirty shadow crush - simulating low dynamic range of cheap CCDs
+                float crush = uShadowCrush * 0.35;
                 shifted = max(shifted - crush, 0.0) / (1.0 - crush);
                 
-                // Add a slight magenta shift in low light
-                float lowLight = 1.0 - smoothstep(0.0, 0.3, y);
-                shifted = mix(shifted, shifted * vec3(1.1, 0.9, 1.1), lowLight * uShadowCrush);
+                // Low-light magenta cast
+                float lowLight = 1.0 - smoothstep(0.0, 0.35, y);
+                shifted = mix(shifted, shifted * vec3(1.15, 0.85, 1.15), lowLight * uShadowCrush);
                 
                 return shifted;
             }
@@ -68,19 +69,18 @@ object RetroPipelineShaders {
             void main() {
                 vec2 uv = vTexCoord;
                 
-                // Slight sensor blur simulation (low-quality lens)
-                // Reduced texture taps for performance
+                // Slight sensor blur simulation (low-quality lens/interpolation)
                 vec2 d = uv - vec2(0.5);
                 float r = length(d) * 2.0;
                 
-                // Chromatic Aberration
-                float ca = 0.0015 * uChromaticAberration * r;
+                // Chromatic Aberration (Lens imperfection)
+                float ca = 0.0022 * uChromaticAberration * r;
                 vec3 c;
                 if (ca > 0.0 && r > 0.001) {
                     vec2 dir = d / r;
                     float rChan = texture2D(uTexture, uv + dir * ca).r;
                     vec4 ctr = texture2D(uTexture, uv);
-                    float bChan = texture2D(uTexture, uv - dir * ca * 1.2).b;
+                    float bChan = texture2D(uTexture, uv - dir * ca * 1.3).b;
                     c = vec3(rChan, ctr.g, bChan);
                 } else {
                     c = texture2D(uTexture, uv).rgb;
@@ -88,34 +88,37 @@ object RetroPipelineShaders {
                 
                 c *= uExposureMultiplier;
                 c = vnx_vintage_color_science(c);
-                c = mix(vec3(vnx_luma(c)), c, clamp(uDesaturation, 0.0, 1.0));
+                c = mix(vec3(vnx_luma(c)), c, clamp(uDesaturation, 0.0, 1.2));
                 
                 // CCD Noise (Luma-dependent)
-                // Old sensors struggle in shadows
+                // Old sensors struggle significantly in shadows with blotchy chroma noise
                 vec2 fc = gl_FragCoord.xy;
                 float y = vnx_luma(c);
-                float noiseW = (1.5 + pow(1.0 - smoothstep(0.0, 0.6, y), 3.0) * 6.0) * uSensorNoise;
+                float noiseW = (1.8 + pow(1.0 - smoothstep(0.0, 0.65, y), 3.5) * 8.0) * uSensorNoise;
                 float grain = vnx_hash(fc + uNoisePhase) - 0.5;
                 
-                // Blotchy chroma noise
-                vec2 blotchUv = floor(fc * 0.08);
+                // Large blotchy chroma noise (very characteristic of early CMOS/CCD)
+                vec2 blotchUv = floor(fc * 0.1);
                 float nR = vnx_hash(blotchUv + uNoisePhase) - 0.5;
-                float nG = vnx_hash(blotchUv + uNoisePhase + 7.0) - 0.5;
-                float nB = vnx_hash(blotchUv + uNoisePhase + 13.0) - 0.5;
-                vec3 chroma = vec3(nR, nG, nB) * 0.12 * uChromaNoise;
+                float nG = vnx_hash(blotchUv + uNoisePhase + 9.0) - 0.5;
+                float nB = vnx_hash(blotchUv + uNoisePhase + 17.0) - 0.5;
+                vec3 chroma = vec3(nR, nG, nB) * 0.15 * uChromaNoise;
                 
-                c += (vec3(grain * 0.03) + chroma) * noiseW;
+                c += (vec3(grain * 0.04) + chroma) * noiseW;
                 
                 // JPEG macroblocking simulation (8x8 pixel blocks)
                 if (uBlockArtifacts > 0.0) {
-                    vec2 res = vec2(240.0, 180.0); // Even lower res for more artifacts
+                    // Simulate low-resolution grid sampling
+                    vec2 res = vec2(320.0, 240.0); 
                     vec2 grid = floor(uv * res) / res;
                     vec3 blockC = texture2D(uTexture, grid).rgb;
-                    c = mix(c, blockC, uBlockArtifacts * 0.4);
+                    
+                    // Mix in blocking and slight edge artifacts
+                    c = mix(c, blockC, uBlockArtifacts * 0.5);
                 }
 
-                // Vignette
-                c *= (1.0 - uVignetteIntensity * pow(r, 2.5));
+                // Vignette (Physical lens shading)
+                c *= (1.0 - uVignetteIntensity * pow(r, 2.8));
                 
                 gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
             }

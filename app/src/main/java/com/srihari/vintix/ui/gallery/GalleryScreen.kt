@@ -48,14 +48,25 @@ fun GalleryScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color(0xFF050505))
     ) {
         if (photos.isEmpty()) {
-            Text(
-                text = "No photos yet",
-                color = Color.White.copy(alpha = 0.5f),
-                modifier = Modifier.align(Alignment.Center)
-            )
+            Column(
+                modifier = Modifier.align(Alignment.Center),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "NO IMAGES",
+                    color = Color.White.copy(alpha = 0.3f),
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(24.dp))
+                TextButton(onClick = onNavigateBack) {
+                    Text("[ BACK ]", color = Color.White, fontFamily = FontFamily.Monospace)
+                }
+            }
             return
         }
 
@@ -63,71 +74,73 @@ fun GalleryScreen(
 
         HorizontalPager(
             state = pagerState,
-            modifier = Modifier.fillMaxSize()
+            modifier = Modifier.fillMaxSize(),
+            pageSpacing = 16.dp
         ) { page ->
             val photo = photos[page]
-            val pageOffset = (
-                (pagerState.currentPage - page) + pagerState.currentPageOffsetFraction
-            ).absoluteValue.coerceIn(0f, 1f)
             val imageRequest = remember(photo.uri) {
                 ImageRequest.Builder(context)
                     .data(photo.uri)
-                    .crossfade(false)
+                    .crossfade(true)
                     .allowHardware(true)
-                    .memoryCachePolicy(CachePolicy.ENABLED)
-                    .diskCachePolicy(CachePolicy.ENABLED)
-                    .precision(Precision.INEXACT)
                     .build()
             }
             AsyncImage(
                 model = imageRequest,
-                contentDescription = "Photo taken with ${photo.profileName}",
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        alpha = 1f - pageOffset * 0.18f
-                        val scale = 0.985f + (1f - pageOffset) * 0.015f
-                        scaleX = scale
-                        scaleY = scale
-                    },
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Fit
             )
         }
 
-        // Top bar
+        // Top Bar (Matte Overlay)
         Row(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .background(Color.Black.copy(alpha = 0.4f))
+                .background(Color.Black.copy(alpha = 0.6f))
                 .statusBarsPadding()
-                .padding(horizontal = 8.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.End,
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            TextButton(
-                onClick = {
-                    val currentPhoto = photos.getOrNull(pagerState.currentPage) ?: return@TextButton
-                    val shareIntent = Intent().apply {
-                        action = Intent.ACTION_SEND
-                        putExtra(Intent.EXTRA_STREAM, currentPhoto.uri)
-                        type = "image/jpeg"
-                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    }
-                    context.startActivity(Intent.createChooser(shareIntent, "Share Vintix Photo"))
-                }
-            ) {
+            IconButton(onClick = onNavigateBack) {
+                Text("←", color = Color.White, fontSize = 24.sp)
+            }
+            
+            Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = "[ SHARE ]",
-                    color = Color.White,
+                    text = "${pagerState.currentPage + 1} / ${photos.size}",
+                    color = Color.White.copy(alpha = 0.7f),
                     fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
                 )
+                Spacer(modifier = Modifier.width(16.dp))
+                TextButton(
+                    onClick = {
+                        val currentPhoto = photos.getOrNull(pagerState.currentPage) ?: return@TextButton
+                        val shareIntent = Intent().apply {
+                            action = Intent.ACTION_SEND
+                            putExtra(Intent.EXTRA_STREAM, currentPhoto.uri)
+                            type = "image/jpeg"
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        }
+                        context.startActivity(Intent.createChooser(shareIntent, "Share Vintix Photo"))
+                    }
+                ) {
+                    Text(
+                        text = "[ SHARE ]",
+                        color = Color(0xFFFF8A1F),
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 12.sp
+                    )
+                }
             }
         }
 
-        // Bottom info overlay (retro style)
+        // Bottom Info HUD
         val safeIndex = pagerState.currentPage.coerceIn(0, (photos.size - 1).coerceAtLeast(0))
         val currentPhoto = photos.getOrNull(safeIndex)
         if (currentPhoto != null) {
@@ -135,27 +148,60 @@ fun GalleryScreen(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
                     .fillMaxWidth()
-                    .background(Color.Black.copy(alpha = 0.4f))
+                    .background(Color.Black.copy(alpha = 0.7f))
                     .navigationBarsPadding()
-                    .padding(16.dp)
+                    .padding(24.dp)
             ) {
                 val dateFormat = SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US)
                 val dateStr = dateFormat.format(Date(currentPhoto.dateTaken))
                 
-                Text(
-                    text = dateStr,
-                    color = Color(0xFFFF9800), // Classic digital orange
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "PROFILE: ${currentPhoto.profileName.uppercase(Locale.US)}",
-                    color = Color.White,
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 12.sp,
-                    letterSpacing = 1.sp
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = dateStr,
+                        color = Color(0xFF00FF00).copy(alpha = 0.8f),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    
+                    Text(
+                        text = "VINTIX OS v1.0",
+                        color = Color.White.copy(alpha = 0.4f),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp
+                    )
+                }
+                
+                Spacer(modifier = Modifier.height(8.dp))
+                
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .border(1.dp, Color.White.copy(alpha = 0.5f), RoundedCornerShape(2.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = currentPhoto.profileName.uppercase(Locale.US),
+                            color = Color.White,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    
+                    Spacer(modifier = Modifier.width(12.dp))
+                    
+                    Text(
+                        text = "100% QUALITY",
+                        color = Color.White.copy(alpha = 0.5f),
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.sp
+                    )
+                }
             }
         }
     }

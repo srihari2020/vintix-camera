@@ -487,9 +487,9 @@ fun CameraScreen(
                 }
             }
 
-            // Central Grid & Level
+    // Central Grid & Level
             if (viewModel.gridEnabled.collectAsState().value) {
-                CameraGrid(modifier = Modifier.aspectRatio(1f / currentProfile.aspectRatio.ratio).align(Alignment.Center))
+                CameraGrid(modifier = Modifier.fillMaxSize().align(Alignment.Center))
             }
 
             // Level Indicator (Authentic)
