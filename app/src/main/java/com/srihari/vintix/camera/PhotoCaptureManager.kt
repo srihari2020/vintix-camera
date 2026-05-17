@@ -48,6 +48,7 @@ class PhotoCaptureManager(private val context: Context) {
         cameraProfile: CameraProfile,
         profileName: String,
         noisePhase: Float,
+        isFrontCamera: Boolean,
         timestampStyle: com.srihari.vintix.rendering.timestamp.TimestampStyle?,
         onSuccess: (Uri) -> Unit,
         onError: (Exception) -> Unit
@@ -74,10 +75,13 @@ class PhotoCaptureManager(private val context: Context) {
                         bitmap = applyCropAndScale(bitmap, cameraProfile)
 
                         // 3. Apply Retro Pipeline (OpenGL processing)
+                        // Note: isFrontCamera is false here because exported images 
+                        // should NOT be mirrored, unlike the live preview.
                         val processed = RetroPhotoGlPipeline.processBitmap(
                             bitmap, 
                             cameraProfile, 
-                            noisePhase
+                            noisePhase,
+                            false 
                         )
                         
                         // 4. Save to MediaStore

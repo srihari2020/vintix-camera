@@ -8,6 +8,7 @@ object RetroPipelineShaders {
 
     private val RETRO_FRAGMENT_CORE: String = """
             varying vec2 vTexCoord;
+            varying vec2 vRawTexCoord;
             uniform VKX_SAMPLER uTexture;
             uniform float uNoisePhase;
             uniform float uVignetteIntensity;
@@ -69,18 +70,19 @@ object RetroPipelineShaders {
             void main() {
                 vec2 uv = vTexCoord;
                 
-                // Subtle sensor blur (nostalgic softness) - very slight
-                vec2 d = uv - vec2(0.5);
-                float r = length(d) * 2.0;
+                // Calculate center-relative effects using raw coordinates to avoid 
+                // "bulge" or "stretch" caused by texture matrix sub-sampling.
+                vec2 d = vRawTexCoord - vec2(0.5);
+                float r = length(d) * 2.0; // 0 at center, ~1.4 at corners
                 
-                // Chromatic Aberration - reduced
-                float ca = 0.0008 * uChromaticAberration * r;
+                // Chromatic Aberration - Extremely subtle to avoid "bulge" look
+                float ca = 0.0006 * uChromaticAberration * r;
                 vec3 c;
-                if (ca > 0.0 && r > 0.001) {
-                    vec2 dir = d / r;
+                if (ca > 0.0) {
+                    vec2 dir = d / (r + 0.00001);
                     float rChan = texture2D(uTexture, uv + dir * ca).r;
                     vec4 ctr = texture2D(uTexture, uv);
-                    float bChan = texture2D(uTexture, uv - dir * ca * 1.1).b;
+                    float bChan = texture2D(uTexture, uv - dir * ca * 1.05).b;
                     c = vec3(rChan, ctr.g, bChan);
                 } else {
                     c = texture2D(uTexture, uv).rgb;
@@ -90,31 +92,35 @@ object RetroPipelineShaders {
                 c = vnx_vintage_color_science(c);
                 c = mix(vec3(vnx_luma(c)), c, clamp(uDesaturation, 0.0, 1.1));
                 
-                // CCD Noise (Luma-dependent) - reduced
+                // CCD Noise (Luma-dependent)
                 vec2 fc = gl_FragCoord.xy;
                 float y = vnx_luma(c);
-                float noiseW = (1.0 + pow(1.0 - smoothstep(0.0, 0.8, y), 2.0) * 3.0) * uSensorNoise;
+                float noiseW = (1.0 + pow(1.0 - smoothstep(0.0, 0.8, y), 2.0) * 2.0) * uSensorNoise;
                 float grain = vnx_hash(fc + uNoisePhase) - 0.5;
                 
-                // Subtle blotchy chroma noise - reduced
-                vec2 blotchUv = floor(fc * 0.2);
+                // Subtle blotchy chroma noise
+                vec2 blotchUv = floor(fc * 0.25);
                 float nR = vnx_hash(blotchUv + uNoisePhase) - 0.5;
                 float nG = vnx_hash(blotchUv + uNoisePhase + 9.0) - 0.5;
                 float nB = vnx_hash(blotchUv + uNoisePhase + 17.0) - 0.5;
-                vec3 chroma = vec3(nR, nG, nB) * 0.06 * uChromaNoise;
+                vec3 chroma = vec3(nR, nG, nB) * 0.05 * uChromaNoise;
                 
                 c += (vec3(grain * 0.02) + chroma) * noiseW;
                 
                 // JPEG macroblocking simulation (Subtle)
                 if (uBlockArtifacts > 0.0) {
                     vec2 res = vec2(640.0, 480.0); 
-                    vec2 grid = floor(uv * res) / res;
-                    vec3 blockC = texture2D(uTexture, grid).rgb;
-                    c = mix(c, blockC, uBlockArtifacts * 0.2);
+                    vec2 grid = floor(vRawTexCoord * res) / res;
+                    // To truly block, we would need to transform 'grid' by uTexMatrix,
+                    // but since we only have the matrix in the vertex shader, 
+                    // we'll just use a very subtle mix to avoid stretching artifacts.
+                    vec3 blockC = texture2D(uTexture, uv).rgb; 
+                    c = mix(c, blockC, uBlockArtifacts * 0.15);
                 }
 
-                // Vignette - softer
-                c *= (1.0 - uVignetteIntensity * pow(r, 3.0) * 0.6);
+                // Vignette - softer roll-off to avoid "fisheye" feeling
+                float vignette = 1.0 - uVignetteIntensity * (r * r * 0.25);
+                c *= clamp(vignette, 0.0, 1.0);
                 
                 gl_FragColor = vec4(clamp(c, 0.0, 1.0), 1.0);
             }
@@ -126,6 +132,7 @@ object RetroPipelineShaders {
         uniform mat4 uTexMatrix;
         uniform bool uMirror;
         varying vec2 vTexCoord;
+        varying vec2 vRawTexCoord;
         void main() {
             // Mirror horizontally by flipping X position for front camera
             vec4 pos = aPosition;
@@ -134,18 +141,28 @@ object RetroPipelineShaders {
             }
             gl_Position = pos;
             vTexCoord = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
+            vRawTexCoord = aTexCoord;
         }
     """
 
     const val PHOTO_VERTEX_SHADER: String = """
         attribute vec4 aPosition;
         attribute vec2 aTexCoord;
+        uniform bool uMirror;
         varying vec2 vTexCoord;
+        varying vec2 vRawTexCoord;
         void main() {
             gl_Position = aPosition;
+            
+            vec2 texCoord = aTexCoord;
+            if (uMirror) {
+                texCoord.x = 1.0 - texCoord.x;
+            }
+            
             // Flip texture coordinates vertically because Android Bitmaps are top-down,
             // but OpenGL expects bottom-up.
-            vTexCoord = vec2(aTexCoord.x, 1.0 - aTexCoord.y);
+            vTexCoord = vec2(texCoord.x, 1.0 - texCoord.y);
+            vRawTexCoord = aTexCoord;
         }
     """
 

@@ -82,6 +82,13 @@ fun CameraScreen(
 
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
     var glViewRef by remember { mutableStateOf<VintixGLSurfaceView?>(null) }
+    
+    // Ensure freezePreview is reset even on errors
+    LaunchedEffect(captureState) {
+        if (captureState is CaptureState.Success || captureState is CaptureState.Error) {
+            glViewRef?.vintixRenderer?.freezePreview = false
+        }
+    }
     val photoCaptureManager = remember { PhotoCaptureManager(context) }
     val orientationManager = remember { DeviceOrientationManager(context) }
     
@@ -190,6 +197,7 @@ fun CameraScreen(
                 cameraProfile = currentProfile,
                 profileName = selectedProfileName,
                 noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
+                isFrontCamera = isFrontCamera,
                 timestampStyle = appSettings.timestampStyle(),
                 onSuccess = { uri ->
                     Log.d(TAG, "Capture success: $uri")
@@ -302,6 +310,10 @@ fun CameraScreen(
                         GLPreview(
                             cameraProfile = currentProfile,
                             isFrontCamera = isFrontCamera,
+                            aspectRatio = when (currentAspectRatio) {
+                                com.srihari.vintix.rendering.AspectRatio.RATIO_16_9 -> androidx.camera.core.AspectRatio.RATIO_16_9
+                                else -> androidx.camera.core.AspectRatio.RATIO_4_3
+                            },
                             onCameraReady = { manager ->
                                 Log.d(TAG, "GLPreview camera ready")
                                 cameraManager = manager

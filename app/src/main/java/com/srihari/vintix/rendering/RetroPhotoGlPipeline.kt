@@ -26,6 +26,7 @@ class RetroPhotoGlPipeline private constructor() {
     private var shaderProgram: ShaderProgram? = null
     private var profileUniforms: CameraProfileUniformHandles? = null
     private var uTextureLoc: Int = -1
+    private var uMirrorLoc: Int = -1
     private val quad = TexturedQuad()
 
     private var initialized = false
@@ -40,7 +41,8 @@ class RetroPhotoGlPipeline private constructor() {
     fun process(
         source: Bitmap, 
         profile: CameraProfile, 
-        noisePhase: Float
+        noisePhase: Float,
+        isFrontCamera: Boolean = false
     ): Bitmap {
         val w0 = source.width
         val h0 = source.height
@@ -82,6 +84,10 @@ class RetroPhotoGlPipeline private constructor() {
             val program = shaderProgram!!
             program.use()
             profileUniforms!!.upload(profile, noisePhase)
+
+            if (uMirrorLoc >= 0) {
+                GLES20.glUniform1i(uMirrorLoc, if (isFrontCamera) 1 else 0)
+            }
 
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0)
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, inputTextureId)
@@ -148,6 +154,7 @@ class RetroPhotoGlPipeline private constructor() {
         shaderProgram = sp
         profileUniforms = CameraProfileUniformHandles(sp)
         uTextureLoc = sp.getUniformLocation("uTexture")
+        uMirrorLoc = sp.getUniformLocation("uMirror")
         initialized = true
     }
 
@@ -237,10 +244,15 @@ class RetroPhotoGlPipeline private constructor() {
         private val globalLock = Any()
         private var instance: RetroPhotoGlPipeline? = null
 
-        fun processBitmap(source: Bitmap, profile: CameraProfile, noisePhase: Float): Bitmap {
+        fun processBitmap(
+            source: Bitmap, 
+            profile: CameraProfile, 
+            noisePhase: Float,
+            isFrontCamera: Boolean = false
+        ): Bitmap {
             synchronized(globalLock) {
                 if (instance == null) instance = RetroPhotoGlPipeline()
-                return instance!!.process(source, profile, noisePhase)
+                return instance!!.process(source, profile, noisePhase, isFrontCamera)
             }
         }
 

@@ -4,9 +4,11 @@ import android.net.Uri
 import android.util.Log
 import androidx.camera.core.ImageCapture
 import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 private const val TAG = "CameraViewModel"
 
@@ -100,6 +102,15 @@ class CameraViewModel : ViewModel() {
 
     fun onCaptureStarted(feedback: com.srihari.vintix.rendering.FeedbackBehavior) {
         _captureState.value = CaptureState.Capturing(feedback)
+        
+        // Safety timeout to ensure shutter is NEVER permanently disabled
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(15_000)
+            if (_captureState.value is CaptureState.Capturing) {
+                Log.w(TAG, "Capture safety timeout reached — resetting state")
+                resetCaptureState()
+            }
+        }
     }
 
     fun onPhotoCaptured(uri: Uri) {

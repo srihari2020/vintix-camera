@@ -170,9 +170,14 @@ class CameraManager(private val context: Context) {
 
     suspend fun startCamera(
         lifecycleOwner: LifecycleOwner,
-        surface: Surface
+        surface: Surface,
+        facing: Int? = null,
+        aspectRatio: Int = androidx.camera.core.AspectRatio.RATIO_4_3
     ) {
-        Log.d(TAG, "startCamera(Surface, facing=$lensFacing) — requesting CameraProvider")
+        if (facing != null) {
+            lensFacing = facing
+        }
+        Log.d(TAG, "startCamera(Surface, facing=$lensFacing, ratio=$aspectRatio) — requesting CameraProvider")
 
         val provider = getTimedCameraProvider()
         if (provider == null) {
@@ -184,11 +189,9 @@ class CameraManager(private val context: Context) {
         val rotation = targetRotation()
         orientationEventListener.enable()
 
-        // Use a more flexible resolution strategy to avoid stretching.
-        // We let CameraX choose the best resolution for the sensor, 
-        // and SurfaceTexture's transform matrix will handle the mapping.
         val preview = Preview.Builder()
             .setTargetRotation(rotation)
+            .setTargetAspectRatio(aspectRatio)
             .build()
             .also {
                 it.surfaceProvider = Preview.SurfaceProvider { request ->

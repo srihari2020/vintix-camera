@@ -52,6 +52,7 @@ fun GLPreview(
     modifier: Modifier = Modifier,
     cameraProfile: CameraProfile = CameraProfile.Default,
     isFrontCamera: Boolean = false,
+    aspectRatio: Int = androidx.camera.core.AspectRatio.RATIO_4_3,
     onCameraReady: (CameraManager) -> Unit = {},
     onGlViewReady: (VintixGLSurfaceView) -> Unit = {},
     onCameraError: (Throwable) -> Unit = {},
@@ -64,12 +65,18 @@ fun GLPreview(
     val activeSurface = remember { AtomicReference<Surface?>() }
     val isDisposed = remember { AtomicBoolean(false) }
 
-    // Re-bind camera when lens facing changes
-    LaunchedEffect(isFrontCamera) {
+    // Re-bind camera when lens facing or aspect ratio changes
+    LaunchedEffect(isFrontCamera, aspectRatio) {
         val surface = activeSurface.get()
         if (surface != null && !isDisposed.get()) {
-            Log.d(TAG, "Lens facing changed to ${if (isFrontCamera) "FRONT" else "BACK"} — toggling camera")
-            cameraManager.toggleCamera(lifecycleOwner, surface = surface)
+            Log.d(TAG, "Camera config changed — restarting camera")
+            cameraManager.startCamera(
+                lifecycleOwner = lifecycleOwner,
+                surface = surface,
+                facing = if (isFrontCamera) androidx.camera.core.CameraSelector.LENS_FACING_FRONT 
+                         else androidx.camera.core.CameraSelector.LENS_FACING_BACK,
+                aspectRatio = aspectRatio
+            )
         }
     }
 
@@ -102,7 +109,13 @@ fun GLPreview(
                     try {
                         Log.d(TAG, "Starting CameraX with GL Surface (timeout=${CAMERA_START_TIMEOUT_MS}ms)")
                         val result = withTimeoutOrNull(CAMERA_START_TIMEOUT_MS) {
-                            cameraManager.startCamera(lifecycleOwner, surface)
+                            cameraManager.startCamera(
+                                lifecycleOwner = lifecycleOwner, 
+                                surface = surface,
+                                facing = if (isFrontCamera) androidx.camera.core.CameraSelector.LENS_FACING_FRONT 
+                                         else androidx.camera.core.CameraSelector.LENS_FACING_BACK,
+                                aspectRatio = aspectRatio
+                            )
                         }
                         if (result == null) {
                             throw IllegalStateException("CameraX start timed out after ${CAMERA_START_TIMEOUT_MS}ms")
