@@ -37,13 +37,15 @@ class VintixGLSurfaceView(context: Context) : GLSurfaceView(context) {
 
         // Create and set the renderer
         vintixRenderer = VintixRenderer()
-        vintixRenderer.requestRender = { requestRender() }
         setRenderer(vintixRenderer)
 
-        // Render ONLY when a frame is explicitly available
-        renderMode = RENDERMODE_WHEN_DIRTY
+        // CONTINUOUS rendering: onDrawFrame fires every vsync (~16ms).
+        // This guarantees updateTexImage() is called promptly, preventing
+        // SurfaceTexture buffer queue backup that causes preview freeze.
+        // RENDERMODE_WHEN_DIRTY + requestRender() is race-prone on many devices.
+        renderMode = RENDERMODE_CONTINUOUSLY
 
-        Log.d(TAG, "Initialized — EGL context version=2, preserveOnPause=true, renderMode=WHEN_DIRTY")
+        Log.d(TAG, "Initialized — EGL context version=2, preserveOnPause=true, renderMode=CONTINUOUSLY")
     }
 
     /**

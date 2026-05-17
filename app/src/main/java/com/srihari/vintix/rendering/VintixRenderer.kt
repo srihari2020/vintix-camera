@@ -60,15 +60,19 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
     @Volatile
     private var surfaceTextureReleased: Boolean = false
 
+    var cameraXRotationDegrees: Int = 0
+
     private val texTransformMatrix = FloatArray(16)
+    private val customMatrix = FloatArray(16)
+    private val finalTexMatrix = FloatArray(16)
 
     var onSurfaceTextureAvailable: ((SurfaceTexture) -> Unit)? = null
-    var requestRender: (() -> Unit)? = null
     var onGlPipelineFailed: ((Exception) -> Unit)? = null
 
     override fun onFrameAvailable(surfaceTexture: SurfaceTexture?) {
+        // Just set the flag. With RENDERMODE_CONTINUOUSLY, the GL thread will
+        // pick this up on the next vsync — no requestRender() needed.
         frameAvailable = true
-        requestRender?.invoke()
     }
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
@@ -130,31 +134,39 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
         try {
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
 
+            // Consume new camera frame if available
             val st = surfaceTexture
-            if (st != null && !surfaceTextureReleased && frameAvailable) {
-                if (!freezePreview) {
+            if (st != null && !surfaceTextureReleased && frameAvailable && !freezePreview) {
+                try {
                     st.updateTexImage()
                     st.getTransformMatrix(texTransformMatrix)
-                    frameAvailable = false
+                } catch (e: Exception) {
+                    Log.e(TAG, "updateTexImage failed", e)
                 }
-                // When frozen, do NOT clear frameAvailable.
-                // This ensures the very next frame after unfreeze is consumed immediately
-                // without waiting for a new onFrameAvailable callback.
+                frameAvailable = false
             }
 
+            // Always render the last-known texture — prevents black/stale frames.
+            // With RENDERMODE_CONTINUOUSLY this runs every vsync.
             shaderProgram.use()
+            // Compose CameraX rotation and mirroring
+            Matrix.setIdentityM(customMatrix, 0)
+            Matrix.translateM(customMatrix, 0, 0.5f, 0.5f, 0f)
             
-            // CameraX provides a transform matrix via SurfaceTexture.getTransformMatrix.
-            // This matrix already handles rotation and mirroring for the specific lens facing.
-            // For a "mirror-like" selfie preview, we only apply extra horizontal flipping
-            // if the matrix doesn't already contain it.
+            // To rotate image clockwise by cameraXRotationDegrees, rotate texCoords counter-clockwise
+            Matrix.rotateM(customMatrix, 0, cameraXRotationDegrees.toFloat(), 0f, 0f, 1f)
             
-            GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, texTransformMatrix, 0)
-            
-            // Mirror horizontally for front camera to get a mirror-like preview
-            if (uMirrorLoc >= 0) {
-                GLES20.glUniform1i(uMirrorLoc, if (isFrontCamera) 1 else 0)
+            if (isFrontCamera) {
+                // Mirror horizontally on screen (flip X after rotation)
+                Matrix.scaleM(customMatrix, 0, -1f, 1f, 1f)
             }
+            
+            Matrix.translateM(customMatrix, 0, -0.5f, -0.5f, 0f)
+            
+            // Final = SurfaceTextureMatrix * CustomMatrix
+            Matrix.multiplyMM(finalTexMatrix, 0, texTransformMatrix, 0, customMatrix, 0)
+            
+            GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, finalTexMatrix, 0)
 
             noisePhase = (noisePhase + 0.019f).rem(1f)
             noisePhaseSnapshot = noisePhase

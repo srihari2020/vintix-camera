@@ -75,25 +75,7 @@ class CameraManager(private val context: Context) {
     var imageCapture: ImageCapture? = null
         private set
 
-    fun toggleCamera(lifecycleOwner: LifecycleOwner, surface: Surface? = null, surfaceProvider: Preview.SurfaceProvider? = null) {
-        lensFacing = if (lensFacing == CameraSelector.LENS_FACING_BACK) {
-            CameraSelector.LENS_FACING_FRONT
-        } else {
-            CameraSelector.LENS_FACING_BACK
-        }
-        
-        Log.d(TAG, "toggleCamera — new lensFacing: $lensFacing")
-        
-        runOnMain {
-            lifecycleOwner.lifecycleScope.launch {
-                if (surface != null) {
-                    startCamera(lifecycleOwner, surface)
-                } else if (surfaceProvider != null) {
-                    startCamera(lifecycleOwner, surfaceProvider)
-                }
-            }
-        }
-    }
+
 
     /**
      * Starts camera with a standard CameraX SurfaceProvider.
@@ -101,8 +83,13 @@ class CameraManager(private val context: Context) {
      */
     suspend fun startCamera(
         lifecycleOwner: LifecycleOwner,
-        surfaceProvider: Preview.SurfaceProvider
+        surfaceProvider: Preview.SurfaceProvider,
+        facing: Int? = null,
+        aspectRatio: Int = androidx.camera.core.AspectRatio.RATIO_4_3
     ) {
+        if (facing != null) {
+            lensFacing = facing
+        }
         Log.d(TAG, "startCamera(SurfaceProvider, facing=$lensFacing) — requesting CameraProvider")
 
         val provider = getTimedCameraProvider()
@@ -117,6 +104,7 @@ class CameraManager(private val context: Context) {
 
         val preview = Preview.Builder()
             .setTargetRotation(rotation)
+            .setTargetAspectRatio(aspectRatio)
             .build()
             .also {
                 it.surfaceProvider = surfaceProvider
@@ -125,6 +113,7 @@ class CameraManager(private val context: Context) {
         val imageCaptureUseCase = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetRotation(rotation)
+            .setIoExecutor(ioExecutor)
             .build()
 
         val cameraSelector = CameraSelector.Builder()
@@ -168,80 +157,7 @@ class CameraManager(private val context: Context) {
      */
     private val ioExecutor = Executors.newSingleThreadExecutor()
 
-    suspend fun startCamera(
-        lifecycleOwner: LifecycleOwner,
-        surface: Surface,
-        facing: Int? = null,
-        aspectRatio: Int = androidx.camera.core.AspectRatio.RATIO_4_3
-    ) {
-        if (facing != null) {
-            lensFacing = facing
-        }
-        Log.d(TAG, "startCamera(Surface, facing=$lensFacing, ratio=$aspectRatio) — requesting CameraProvider")
 
-        val provider = getTimedCameraProvider()
-        if (provider == null) {
-            val msg = "CameraProvider timed out after ${PROVIDER_TIMEOUT_MS}ms"
-            Log.e(TAG, msg)
-            throw IllegalStateException(msg)
-        }
-
-        val rotation = targetRotation()
-        orientationEventListener.enable()
-
-        val preview = Preview.Builder()
-            .setTargetRotation(rotation)
-            .setTargetAspectRatio(aspectRatio)
-            .build()
-            .also {
-                it.surfaceProvider = Preview.SurfaceProvider { request ->
-                    Log.d(TAG, "SurfaceProvider.onSurfaceRequested — providing GL surface")
-                    request.provideSurface(
-                        surface,
-                        ContextCompat.getMainExecutor(context)
-                    ) { result ->
-                        Log.d(TAG, "Surface release callback (resultCode=${result.resultCode})")
-                    }
-                }
-            }
-
-        val imageCaptureUseCase = ImageCapture.Builder()
-            .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
-            .setTargetRotation(rotation)
-            .setIoExecutor(ioExecutor) // Reuse executor
-            .build()
-
-        val cameraSelector = CameraSelector.Builder()
-            .requireLensFacing(lensFacing)
-            .build()
-
-        withContext(Dispatchers.Main) {
-            try {
-                Log.d(TAG, "Unbinding all use cases before rebind")
-                provider.unbindAll()
-                _isBound = false
-
-                Log.d(TAG, "bindToLifecycle — preview(Surface) + imageCapture")
-                camera = provider.bindToLifecycle(
-                    lifecycleOwner,
-                    cameraSelector,
-                    preview,
-                    imageCaptureUseCase
-                )
-                previewUseCase = preview
-                imageCapture = imageCaptureUseCase
-                _isBound = true
-                Log.d(TAG, "Camera bound successfully (Surface/GL mode)")
-            } catch (e: Exception) {
-                previewUseCase = null
-                imageCapture = null
-                camera = null
-                _isBound = false
-                Log.e(TAG, "Camera binding failed", e)
-                throw e
-            }
-        }
-    }
 
     fun updateTargetRotation(rotation: Int = targetRotation()) {
         runOnMain {

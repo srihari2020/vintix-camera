@@ -127,18 +127,10 @@ object RetroPipelineShaders {
         attribute vec4 aPosition;
         attribute vec2 aTexCoord;
         uniform mat4 uTexMatrix;
-        uniform bool uMirror;
         varying vec2 vTexCoord;
         void main() {
             gl_Position = aPosition;
-            // Apply the SurfaceTexture transform (handles rotation/crop from CameraX).
             vTexCoord = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
-            // For front camera: flip texture U for mirror-like selfie preview.
-            // This is applied AFTER the matrix transform so it doesn't conflict
-            // with any flip the SurfaceTexture matrix already contains.
-            if (uMirror) {
-                vTexCoord.x = 1.0 - vTexCoord.x;
-            }
         }
     """
 

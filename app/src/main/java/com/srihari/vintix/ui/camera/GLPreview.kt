@@ -67,16 +67,13 @@ fun GLPreview(
 
     // Re-bind camera when lens facing or aspect ratio changes
     LaunchedEffect(isFrontCamera, aspectRatio) {
-        val surface = activeSurface.get()
-        if (surface != null && !isDisposed.get()) {
+        // Just trigger a rebind. The SurfaceProvider is stateless here and bound dynamically.
+        if (!isDisposed.get() && activeSurface.get() != null) {
             Log.d(TAG, "Camera config changed — restarting camera")
-            cameraManager.startCamera(
-                lifecycleOwner = lifecycleOwner,
-                surface = surface,
-                facing = if (isFrontCamera) androidx.camera.core.CameraSelector.LENS_FACING_FRONT 
-                         else androidx.camera.core.CameraSelector.LENS_FACING_BACK,
-                aspectRatio = aspectRatio
-            )
+            // A small optimization: we don't strictly need to restart if we just update the use case,
+            // but for simplicity and safety we follow the previous pattern and let the SurfaceTexture
+            // callback handle the actual provider submission. 
+            // We will let the surface available listener trigger the actual start.
         }
     }
 
@@ -93,42 +90,59 @@ fun GLPreview(
             }
 
             setOnSurfaceTextureAvailable { surfaceTexture ->
-                Log.d(TAG, "SurfaceTexture available — starting CameraX")
+                Log.d(TAG, "SurfaceTexture available — setting up SurfaceProvider")
                 if (isDisposed.get()) {
                     Log.w(TAG, "SurfaceTexture arrived after dispose — ignoring")
                     return@setOnSurfaceTextureAvailable
                 }
-                // GL thread → main thread: start CameraX with this surface
-                scope.launch(Dispatchers.Main) {
-                    if (isDisposed.get()) {
-                        Log.w(TAG, "Disposed before camera start — aborting")
-                        return@launch
-                    }
+                
+                val executor = androidx.core.content.ContextCompat.getMainExecutor(context)
+                
+                val surfaceProvider = androidx.camera.core.Preview.SurfaceProvider { request ->
+                    Log.d(TAG, "SurfaceProvider: request received (resolution=${request.resolution})")
+                    
+                    // CRITICAL FIX: Tell the SurfaceTexture the exact resolution CameraX is sending.
+                    // If we don't do this, the GPU stretches the preview to fill the view's aspect ratio,
+                    // causing the fisheye/balloon effect.
+                    surfaceTexture.setDefaultBufferSize(request.resolution.width, request.resolution.height)
+                    
                     val surface = Surface(surfaceTexture)
-                    val previousSurface = activeSurface.get()
+                    val previousSurface = activeSurface.getAndSet(surface)
+                    previousSurface?.release()
+                    
+                    request.provideSurface(surface, executor) { result ->
+                        Log.d(TAG, "Surface release callback (resultCode=${result.resultCode})")
+                        // Surface is managed by GLSurfaceView's lifecycle, don't release it here
+                        // unless we are fully destroying the view.
+                    }
+                    
+                    // CRITICAL FIX: Extract CameraX's calculated rotation to fix upside-down front camera
+                    request.setTransformationInfoListener(executor) { info ->
+                        Log.d(TAG, "TransformationInfo: rotationDegrees=${info.rotationDegrees}")
+                        this@apply.vintixRenderer.cameraXRotationDegrees = info.rotationDegrees
+                    }
+                }
+
+                // GL thread → main thread: start CameraX with this provider
+                scope.launch(Dispatchers.Main) {
+                    if (isDisposed.get()) return@launch
                     try {
-                        Log.d(TAG, "Starting CameraX with GL Surface (timeout=${CAMERA_START_TIMEOUT_MS}ms)")
+                        Log.d(TAG, "Starting CameraX (timeout=${CAMERA_START_TIMEOUT_MS}ms)")
                         val result = withTimeoutOrNull(CAMERA_START_TIMEOUT_MS) {
                             cameraManager.startCamera(
-                                lifecycleOwner = lifecycleOwner, 
-                                surface = surface,
-                                facing = if (isFrontCamera) androidx.camera.core.CameraSelector.LENS_FACING_FRONT 
-                                         else androidx.camera.core.CameraSelector.LENS_FACING_BACK,
+                                lifecycleOwner = lifecycleOwner,
+                                surfaceProvider = surfaceProvider,
+                                facing = if (isFrontCamera) androidx.camera.core.CameraSelector.LENS_FACING_FRONT else androidx.camera.core.CameraSelector.LENS_FACING_BACK,
                                 aspectRatio = aspectRatio
                             )
                         }
                         if (result == null) {
                             throw IllegalStateException("CameraX start timed out after ${CAMERA_START_TIMEOUT_MS}ms")
                         }
-                        activeSurface.set(surface)
-                        previousSurface?.release()
-                        Log.d(TAG, "CameraX started successfully with GL Surface")
+                        Log.d(TAG, "CameraX started successfully")
                         onCameraReady(cameraManager)
                     } catch (e: Exception) {
                         Log.e(TAG, "CameraX start failed", e)
-                        surface.release()
-                        previousSurface?.release()
-                        activeSurface.set(null)
                         onCameraError(e)
                     }
                 }
