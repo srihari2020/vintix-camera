@@ -142,10 +142,13 @@ fun CameraScreen(
     }
 
     val profiles = mapOf(
-        "Early Digital" to CameraProfiles.EarlyDigitalConsumer,
-        "Daylight" to CameraProfiles.DaylightNeutral,
-        "CyberShot '03" to CameraProfiles.CyberShot2003,
-        "Disposable" to CameraProfiles.DisposableFilm
+        "CyberShot" to CameraProfiles.CyberShot2003,
+        "Coolpix" to CameraProfiles.Coolpix,
+        "Handycam" to CameraProfiles.Handycam,
+        "VGA 1999" to CameraProfiles.VGA1999,
+        "Disposable" to CameraProfiles.DisposableFilm,
+        "Early Dig" to CameraProfiles.EarlyDigitalConsumer,
+        "Daylight" to CameraProfiles.DaylightNeutral
     )
     var selectedProfileName by remember { mutableStateOf(profiles.keys.first()) }
     val baseProfile = profiles[selectedProfileName] ?: CameraProfile.Default

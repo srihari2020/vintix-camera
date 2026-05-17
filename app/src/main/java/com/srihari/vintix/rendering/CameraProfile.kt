@@ -120,4 +120,46 @@ object CameraProfiles {
         jpegQuality = 92,
         exportResolution = 2048
     )
+
+    val VGA1999 = CameraProfile(
+        vignetteIntensity = 0.1f,
+        warmth = 0.3f,
+        desaturation = 0.6f,
+        sensorNoise = 2.5f,
+        chromaNoise = 3.0f,
+        chromaticAberration = 1.5f,
+        shadowCrush = 0.5f,
+        highlightHarshness = 1.2f,
+        blockArtifacts = 2.0f,
+        jpegQuality = 30,
+        exportResolution = 640
+    )
+
+    val Coolpix = CameraProfile(
+        vignetteIntensity = 0.18f,
+        warmth = 1.2f,
+        desaturation = 1.1f,
+        sensorNoise = 0.9f,
+        chromaNoise = 1.0f,
+        chromaticAberration = 0.8f,
+        shadowCrush = 0.3f,
+        highlightHarshness = 0.85f,
+        blockArtifacts = 0.5f,
+        jpegQuality = 85
+    )
+
+    val Handycam = CameraProfile(
+        vignetteIntensity = 0.05f,
+        warmth = 0.2f,
+        desaturation = 0.85f,
+        sensorNoise = 1.8f,
+        chromaNoise = 2.2f,
+        chromaticAberration = 0.5f,
+        shadowCrush = 0.45f,
+        highlightHarshness = 1.0f,
+        blockArtifacts = 1.5f,
+        jpegQuality = 60,
+        aspectRatio = AspectRatio.RATIO_16_9,
+        exportResolution = 720
+    )
 }
