@@ -102,12 +102,13 @@ class PhotoCaptureManager(private val context: Context) {
                         val croppedAndScaled = applyCropAndScale(oriented, captureProfile)
                         if (oriented !== croppedAndScaled) oriented.recycle()
                         
+                        // Process with Retro Pipeline
                         val procStartNs = System.nanoTime()
                         var processed = try {
                             RetroPhotoGlPipeline.processBitmap(
-                                croppedAndScaled,
-                                captureProfile,
-                                noisePhase
+                                source = croppedAndScaled,
+                                profile = captureProfile,
+                                noisePhase = noisePhase
                             )
                         } finally {
                             if (!croppedAndScaled.isRecycled) croppedAndScaled.recycle()

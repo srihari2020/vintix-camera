@@ -128,13 +128,14 @@ fun GLPreview(
     }
 
     // Push profile updates to the GL thread safely
-    LaunchedEffect(cameraProfile) {
+    LaunchedEffect(cameraProfile, isFrontCamera) {
         try {
             glSurfaceView.safeQueueEvent {
                 glSurfaceView.vintixRenderer.cameraProfile = cameraProfile
+                glSurfaceView.vintixRenderer.isFrontCamera = isFrontCamera
             }
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to queue profile update", e)
+            Log.w(TAG, "Failed to queue update", e)
         }
     }
 
@@ -179,6 +180,10 @@ fun GLPreview(
 
     AndroidView(
         factory = { glSurfaceView },
-        modifier = modifier.fillMaxSize()
+        modifier = modifier.fillMaxSize(),
+        onRelease = {
+            Log.d(TAG, "AndroidView.onRelease — stopping camera")
+            cameraManager.stopCamera()
+        }
     )
 }

@@ -2,6 +2,7 @@ package com.srihari.vintix.ui.camera
 
 import android.net.Uri
 import android.util.Log
+import androidx.camera.core.ImageCapture
 import androidx.lifecycle.ViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -48,11 +49,53 @@ class CameraViewModel : ViewModel() {
     private val _isFrontCamera = MutableStateFlow(false)
     val isFrontCamera: StateFlow<Boolean> = _isFrontCamera.asStateFlow()
 
+    private val _flashMode = MutableStateFlow(ImageCapture.FLASH_MODE_OFF)
+    val flashMode: StateFlow<Int> = _flashMode.asStateFlow()
+
+    private val _zoomRatio = MutableStateFlow(1f)
+    val zoomRatio: StateFlow<Float> = _zoomRatio.asStateFlow()
+
+    private val _exposureIndex = MutableStateFlow(0)
+    val exposureIndex: StateFlow<Int> = _exposureIndex.asStateFlow()
+
+    private val _aspectRatio = MutableStateFlow(com.srihari.vintix.rendering.AspectRatio.RATIO_4_3)
+    val aspectRatio: StateFlow<com.srihari.vintix.rendering.AspectRatio> = _aspectRatio.asStateFlow()
+
+    private val _timerSeconds = MutableStateFlow(0)
+    val timerSeconds: StateFlow<Int> = _timerSeconds.asStateFlow()
+
+    private val _gridEnabled = MutableStateFlow(false)
+    val gridEnabled: StateFlow<Boolean> = _gridEnabled.asStateFlow()
+
     fun onPermissionResult(isGranted: Boolean) {
         _isCameraPermissionGranted.value = isGranted
         if (isGranted) {
             _cameraAvailability.value = CameraAvailability.Initializing
         }
+    }
+
+    fun setFlashMode(mode: Int) {
+        _flashMode.value = mode
+    }
+
+    fun setZoomRatio(ratio: Float) {
+        _zoomRatio.value = ratio
+    }
+
+    fun setExposureIndex(index: Int) {
+        _exposureIndex.value = index
+    }
+
+    fun setAspectRatio(ratio: com.srihari.vintix.rendering.AspectRatio) {
+        _aspectRatio.value = ratio
+    }
+
+    fun setTimerSeconds(seconds: Int) {
+        _timerSeconds.value = seconds
+    }
+
+    fun toggleGrid() {
+        _gridEnabled.value = !_gridEnabled.value
     }
 
     fun onCaptureStarted(feedback: com.srihari.vintix.rendering.FeedbackBehavior) {

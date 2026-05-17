@@ -6,10 +6,15 @@ import android.content.ContextWrapper
 import android.os.Build
 import android.os.Looper
 import android.util.Log
+import android.view.OrientationEventListener
 import android.view.Surface
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
+import androidx.camera.core.FocusMeteringAction
 import androidx.camera.core.ImageCapture
+import androidx.camera.core.MeteringPointFactory
 import androidx.camera.core.Preview
+import androidx.camera.core.SurfaceOrientedMeteringPointFactory
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleOwner
@@ -19,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 
 /**
@@ -32,6 +38,31 @@ class CameraManager(private val context: Context) {
     private var cameraProvider: ProcessCameraProvider? = null
     private var previewUseCase: Preview? = null
     private var lensFacing: Int = CameraSelector.LENS_FACING_BACK
+    private var camera: Camera? = null
+
+    private val orientationEventListener by lazy {
+        object : OrientationEventListener(context) {
+            override fun onOrientationChanged(orientation: Int) {
+                if (orientation == ORIENTATION_UNKNOWN) return
+                
+                // Map device orientation to closest 90-degree angle
+                val rotation = when (orientation) {
+                    in 45 until 135 -> Surface.ROTATION_270
+                    in 135 until 225 -> Surface.ROTATION_180
+                    in 225 until 315 -> Surface.ROTATION_90
+                    else -> Surface.ROTATION_0
+                }
+                
+                // Only update if it actually changed to avoid unnecessary rebinds/updates
+                if (rotation != lastRotation) {
+                    lastRotation = rotation
+                    updateTargetRotation(rotation)
+                }
+            }
+        }
+    }
+
+    private var lastRotation: Int = Surface.ROTATION_0
 
     /** Guards against duplicate bindToLifecycle calls. */
     @Volatile
@@ -50,6 +81,8 @@ class CameraManager(private val context: Context) {
         } else {
             CameraSelector.LENS_FACING_BACK
         }
+        
+        Log.d(TAG, "toggleCamera — new lensFacing: $lensFacing")
         
         runOnMain {
             lifecycleOwner.lifecycleScope.launch {
@@ -80,6 +113,7 @@ class CameraManager(private val context: Context) {
         }
 
         val rotation = targetRotation()
+        orientationEventListener.enable()
 
         val preview = Preview.Builder()
             .setTargetRotation(rotation)
@@ -104,7 +138,7 @@ class CameraManager(private val context: Context) {
                 _isBound = false
 
                 Log.d(TAG, "bindToLifecycle — preview + imageCapture")
-                provider.bindToLifecycle(
+                camera = provider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     preview,
@@ -117,6 +151,7 @@ class CameraManager(private val context: Context) {
             } catch (e: Exception) {
                 previewUseCase = null
                 imageCapture = null
+                camera = null
                 _isBound = false
                 Log.e(TAG, "Camera binding failed", e)
                 throw e
@@ -145,9 +180,11 @@ class CameraManager(private val context: Context) {
         }
 
         val rotation = targetRotation()
+        orientationEventListener.enable()
 
         val preview = Preview.Builder()
             .setTargetRotation(rotation)
+            .setTargetResolution(android.util.Size(1280, 720)) // Optimized resolution for 60fps
             .build()
             .also {
                 it.surfaceProvider = Preview.SurfaceProvider { request ->
@@ -164,6 +201,7 @@ class CameraManager(private val context: Context) {
         val imageCaptureUseCase = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetRotation(rotation)
+            .setIoExecutor(Executors.newSingleThreadExecutor()) // Offload IO from main thread
             .build()
 
         val cameraSelector = CameraSelector.Builder()
@@ -177,7 +215,7 @@ class CameraManager(private val context: Context) {
                 _isBound = false
 
                 Log.d(TAG, "bindToLifecycle — preview(Surface) + imageCapture")
-                provider.bindToLifecycle(
+                camera = provider.bindToLifecycle(
                     lifecycleOwner,
                     cameraSelector,
                     preview,
@@ -190,6 +228,7 @@ class CameraManager(private val context: Context) {
             } catch (e: Exception) {
                 previewUseCase = null
                 imageCapture = null
+                camera = null
                 _isBound = false
                 Log.e(TAG, "Camera binding failed", e)
                 throw e
@@ -197,15 +236,50 @@ class CameraManager(private val context: Context) {
         }
     }
 
-    fun updateTargetRotation() {
-        val rotation = targetRotation()
+    fun updateTargetRotation(rotation: Int = targetRotation()) {
         runOnMain {
-            previewUseCase?.targetRotation = rotation
-            imageCapture?.targetRotation = rotation
+            try {
+                previewUseCase?.targetRotation = rotation
+                imageCapture?.targetRotation = rotation
+                Log.d(TAG, "Target rotation updated to: $rotation")
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update target rotation", e)
+            }
         }
     }
 
+    fun focus(x: Float, y: Float, width: Int, height: Int) {
+        val cameraControl = camera?.cameraControl ?: return
+        val factory = SurfaceOrientedMeteringPointFactory(width.toFloat(), height.toFloat())
+        val point = factory.createPoint(x, y)
+        val action = FocusMeteringAction.Builder(point, FocusMeteringAction.FLAG_AF)
+            .setAutoCancelDuration(3000, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .build()
+        cameraControl.startFocusAndMetering(action)
+    }
+
+    fun zoom(ratio: Float) {
+        camera?.cameraControl?.setZoomRatio(ratio)
+    }
+
+    fun setLinearZoom(value: Float) {
+        camera?.cameraControl?.setLinearZoom(value)
+    }
+
+    fun setExposure(value: Int) {
+        camera?.cameraControl?.setExposureCompensationIndex(value)
+    }
+
+    fun getExposureRange(): android.util.Range<Int>? {
+        return camera?.cameraInfo?.exposureState?.exposureCompensationRange
+    }
+
+    fun setFlashMode(mode: Int) {
+        imageCapture?.flashMode = mode
+    }
+
     fun stopCamera() {
+        orientationEventListener.disable()
         if (!_isBound && cameraProvider == null) {
             Log.d(TAG, "stopCamera — already stopped, skipping")
             return
@@ -219,6 +293,7 @@ class CameraManager(private val context: Context) {
             }
             previewUseCase = null
             imageCapture = null
+            camera = null
             _isBound = false
         }
     }
@@ -270,12 +345,14 @@ class CameraManager(private val context: Context) {
 
     private fun targetRotation(): Int {
         val activity = context.findActivity()
-        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        val rotation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             activity?.display?.rotation ?: context.display?.rotation ?: Surface.ROTATION_0
         } else {
             @Suppress("DEPRECATION")
             activity?.windowManager?.defaultDisplay?.rotation ?: Surface.ROTATION_0
         }
+        Log.d(TAG, "Current target rotation: $rotation")
+        return rotation
     }
 
     private tailrec fun Context.findActivity(): Activity? = when (this) {

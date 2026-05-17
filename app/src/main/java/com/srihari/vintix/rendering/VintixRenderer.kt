@@ -54,6 +54,8 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
 
     var cameraProfile: CameraProfile = CameraProfile.Default
 
+    var isFrontCamera: Boolean = false
+
     private var surfaceTexture: SurfaceTexture? = null
 
     @Volatile
@@ -136,6 +138,16 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             }
 
             shaderProgram.use()
+            
+            // Apply mirroring for front camera preview if not already handled by the matrix
+            if (isFrontCamera) {
+                // Front camera should be mirrored for a "mirror-like" preview.
+                // We apply a horizontal flip to the texture matrix.
+                Matrix.translateM(texTransformMatrix, 0, 0.5f, 0.5f, 0f)
+                Matrix.scaleM(texTransformMatrix, 0, -1f, 1f, 1f)
+                Matrix.translateM(texTransformMatrix, 0, -0.5f, -0.5f, 0f)
+            }
+            
             GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, texTransformMatrix, 0)
 
             noisePhase = (noisePhase + 0.019f).rem(1f)

@@ -2,10 +2,7 @@ package com.srihari.vintix.ui.camera
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -22,6 +19,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.LaunchedEffect
+
 @Composable
 fun ProfileSelector(
     profiles: List<String>,
@@ -29,10 +30,22 @@ fun ProfileSelector(
     onProfileSelected: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val listState = rememberLazyListState()
+    val snappingBehavior = rememberSnapFlingBehavior(lazyListState = listState)
+
+    LaunchedEffect(selectedProfile) {
+        val index = profiles.indexOf(selectedProfile)
+        if (index >= 0) {
+            listState.animateScrollToItem(index)
+        }
+    }
+
     LazyRow(
-        modifier = modifier,
-        contentPadding = PaddingValues(horizontal = 24.dp),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        state = listState,
+        flingBehavior = snappingBehavior,
+        modifier = modifier.height(60.dp),
+        contentPadding = PaddingValues(horizontal = 150.dp), // Center the selected item
+        horizontalArrangement = Arrangement.spacedBy(16.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         items(profiles) { profileName ->
@@ -40,21 +53,22 @@ fun ProfileSelector(
             
             Box(
                 modifier = Modifier
-                    .clip(RectangleShape)
+                    .clip(RoundedCornerShape(2.dp))
                     .background(
                         if (isSelected) Color(0xFFFF8A1F) // Vintix Accent
-                        else Color.White.copy(alpha = 0.15f)
+                        else Color.White.copy(alpha = 0.08f)
                     )
                     .clickable { onProfileSelected(profileName) }
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                    .padding(horizontal = 14.dp, vertical = 8.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
                     text = profileName.uppercase(),
-                    color = if (isSelected) Color.Black else Color.White,
+                    color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp
                 )
             }
         }
