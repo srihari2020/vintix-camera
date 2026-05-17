@@ -5,8 +5,6 @@ import android.opengl.GLES11Ext
 import android.opengl.GLES20
 import android.opengl.GLSurfaceView
 import android.opengl.Matrix
-import android.os.Handler
-import android.os.Looper
 import android.util.Log
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
@@ -99,8 +97,9 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             oesTextureId = createOESTexture()
             surfaceTexture = SurfaceTexture(oesTextureId)
             
-            // Use main looper to ensure callbacks fire reliably on all devices (especially OnePlus/Adreno)
-            surfaceTexture?.setOnFrameAvailableListener(this, Handler(Looper.getMainLooper()))
+            // Fire on arbitrary thread — requestRender() is thread-safe on GLSurfaceView.
+            // Avoids main-thread hop that caused preview stutter.
+            surfaceTexture?.setOnFrameAvailableListener(this)
             surfaceTextureReleased = false
 
             onSurfaceTextureAvailable?.invoke(surfaceTexture!!)
@@ -116,9 +115,10 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
         GLES20.glViewport(0, 0, width, height)
-        if (!surfaceTextureReleased) {
-            surfaceTexture?.setDefaultBufferSize(width, height)
-        }
+        // DO NOT call setDefaultBufferSize here.
+        // CameraX negotiates the correct buffer size via its Preview SurfaceProvider.
+        // Overriding it with the view dimensions causes the SurfaceTexture transform
+        // matrix to include a non-uniform scale, producing fisheye/balloon distortion.
     }
 
     @Volatile
@@ -135,8 +135,11 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
                 if (!freezePreview) {
                     st.updateTexImage()
                     st.getTransformMatrix(texTransformMatrix)
+                    frameAvailable = false
                 }
-                frameAvailable = false
+                // When frozen, do NOT clear frameAvailable.
+                // This ensures the very next frame after unfreeze is consumed immediately
+                // without waiting for a new onFrameAvailable callback.
             }
 
             shaderProgram.use()

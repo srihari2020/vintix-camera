@@ -8,7 +8,6 @@ object RetroPipelineShaders {
 
     private val RETRO_FRAGMENT_CORE: String = """
             varying vec2 vTexCoord;
-            varying vec2 vRawTexCoord;
             uniform VKX_SAMPLER uTexture;
             uniform float uNoisePhase;
             uniform float uVignetteIntensity;
@@ -70,9 +69,10 @@ object RetroPipelineShaders {
             void main() {
                 vec2 uv = vTexCoord;
                 
-                // Calculate center-relative effects using raw coordinates to avoid 
-                // "bulge" or "stretch" caused by texture matrix sub-sampling.
-                vec2 d = vRawTexCoord - vec2(0.5);
+                // Center-relative effects based on the actual visible texture coordinates.
+                // Using vTexCoord (post-transform) ensures effects are centered on the
+                // visible image regardless of how the SurfaceTexture matrix crops/rotates.
+                vec2 d = uv - vec2(0.5);
                 float r = length(d) * 2.0; // 0 at center, ~1.4 at corners
                 
                 // Chromatic Aberration - Extremely subtle to avoid "bulge" look
@@ -110,11 +110,8 @@ object RetroPipelineShaders {
                 // JPEG macroblocking simulation (Subtle)
                 if (uBlockArtifacts > 0.0) {
                     vec2 res = vec2(640.0, 480.0); 
-                    vec2 grid = floor(vRawTexCoord * res) / res;
-                    // To truly block, we would need to transform 'grid' by uTexMatrix,
-                    // but since we only have the matrix in the vertex shader, 
-                    // we'll just use a very subtle mix to avoid stretching artifacts.
-                    vec3 blockC = texture2D(uTexture, uv).rgb; 
+                    vec2 grid = floor(uv * res) / res;
+                    vec3 blockC = texture2D(uTexture, grid).rgb; 
                     c = mix(c, blockC, uBlockArtifacts * 0.15);
                 }
 
@@ -132,16 +129,16 @@ object RetroPipelineShaders {
         uniform mat4 uTexMatrix;
         uniform bool uMirror;
         varying vec2 vTexCoord;
-        varying vec2 vRawTexCoord;
         void main() {
-            // Mirror horizontally by flipping X position for front camera
-            vec4 pos = aPosition;
-            if (uMirror) {
-                pos.x = -pos.x;
-            }
-            gl_Position = pos;
+            gl_Position = aPosition;
+            // Apply the SurfaceTexture transform (handles rotation/crop from CameraX).
             vTexCoord = (uTexMatrix * vec4(aTexCoord, 0.0, 1.0)).xy;
-            vRawTexCoord = aTexCoord;
+            // For front camera: flip texture U for mirror-like selfie preview.
+            // This is applied AFTER the matrix transform so it doesn't conflict
+            // with any flip the SurfaceTexture matrix already contains.
+            if (uMirror) {
+                vTexCoord.x = 1.0 - vTexCoord.x;
+            }
         }
     """
 
@@ -150,7 +147,6 @@ object RetroPipelineShaders {
         attribute vec2 aTexCoord;
         uniform bool uMirror;
         varying vec2 vTexCoord;
-        varying vec2 vRawTexCoord;
         void main() {
             gl_Position = aPosition;
             
@@ -162,7 +158,6 @@ object RetroPipelineShaders {
             // Flip texture coordinates vertically because Android Bitmaps are top-down,
             // but OpenGL expects bottom-up.
             vTexCoord = vec2(texCoord.x, 1.0 - texCoord.y);
-            vRawTexCoord = aTexCoord;
         }
     """
 

@@ -83,9 +83,10 @@ fun CameraScreen(
     var cameraManager by remember { mutableStateOf<CameraManager?>(null) }
     var glViewRef by remember { mutableStateOf<VintixGLSurfaceView?>(null) }
     
-    // Ensure freezePreview is reset even on errors
+    // Single source of truth for unfreezing preview after capture.
+    // Covers Success, Error, AND Idle (safety timeout reset) transitions.
     LaunchedEffect(captureState) {
-        if (captureState is CaptureState.Success || captureState is CaptureState.Error) {
+        if (captureState !is CaptureState.Capturing) {
             glViewRef?.vintixRenderer?.freezePreview = false
         }
     }
@@ -184,10 +185,8 @@ fun CameraScreen(
             }
 
             glViewRef?.vintixRenderer?.freezePreview = true
-            scope.launch {
-                delay(feedback.captureFreezeMs)
-                glViewRef?.vintixRenderer?.freezePreview = false
-            }
+            // freezePreview is reset by the LaunchedEffect(captureState) above
+            // when state transitions to Success/Error/Idle. No delay-based reset needed.
 
             viewModel.onCaptureStarted(feedback)
 
@@ -202,18 +201,18 @@ fun CameraScreen(
                 onSuccess = { uri ->
                     Log.d(TAG, "Capture success: $uri")
                     viewModel.onPhotoCaptured(uri)
-                    // Auto-reset state after a short delay to re-enable shutter
+                    // Quick reset to re-enable shutter
                     scope.launch {
-                        delay(300) 
+                        delay(200) 
                         viewModel.resetCaptureState()
                     }
                 },
                 onError = { exception ->
                     Log.e(TAG, "Capture failed", exception)
                     viewModel.onCaptureError(exception.message ?: "Capture Failed")
-                    // Always reset state even on error
+                    // Always reset state even on error — slightly longer so user sees error
                     scope.launch {
-                        delay(1000)
+                        delay(500)
                         viewModel.resetCaptureState()
                     }
                 }

@@ -103,9 +103,11 @@ class CameraViewModel : ViewModel() {
     fun onCaptureStarted(feedback: com.srihari.vintix.rendering.FeedbackBehavior) {
         _captureState.value = CaptureState.Capturing(feedback)
         
-        // Safety timeout to ensure shutter is NEVER permanently disabled
+        // Safety timeout to ensure shutter is NEVER permanently disabled.
+        // 5s is generous for any capture+export path, but short enough
+        // that users don't experience a locked shutter.
         viewModelScope.launch {
-            kotlinx.coroutines.delay(15_000)
+            kotlinx.coroutines.delay(5_000)
             if (_captureState.value is CaptureState.Capturing) {
                 Log.w(TAG, "Capture safety timeout reached — resetting state")
                 resetCaptureState()
