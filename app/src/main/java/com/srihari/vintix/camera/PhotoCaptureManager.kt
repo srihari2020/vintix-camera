@@ -30,27 +30,18 @@ import com.srihari.vintix.telemetry.PerformanceTelemetry
  */
 class PhotoCaptureManager(private val context: Context) {
 
-    private val photoExecutor = Executors.newSingleThreadExecutor()
-    private val captureInFlight = AtomicBoolean(false)
-
     companion object {
+        private const val FILENAME_FORMAT = "yyyyMMdd_HHmmss"
         private const val FILENAME_PREFIX = "VINTIX_"
-        private const val FILENAME_FORMAT = "yyyyMMdd_HHmmss_SSS"
         private const val MIME_TYPE = "image/jpeg"
         private const val RELATIVE_PATH = "Pictures/Vintix"
     }
 
-    fun shutdown() {
-        photoExecutor.shutdown()
-        RetroPhotoGlPipeline.releaseShared()
-    }
+    private val photoExecutor = Executors.newSingleThreadExecutor()
 
     /**
-     * Captures a full-resolution JPEG via CameraX, applies [cameraProfile] using the OpenGL FBO
-     * path ([RetroPhotoGlPipeline]), and inserts the result into MediaStore.
-     *
-     * @param noisePhase Same semantic as preview shader [uNoisePhase]; pass
-     *        [com.srihari.vintix.rendering.VintixRenderer.noisePhaseSnapshot] for closest match to live view.
+     * Captures a photo using CameraX and processes it through the retro GL pipeline.
+     * This method is now non-blocking to allow consecutive captures.
      */
     fun capturePhoto(
         imageCapture: ImageCapture,
@@ -59,99 +50,77 @@ class PhotoCaptureManager(private val context: Context) {
         noisePhase: Float,
         timestampStyle: com.srihari.vintix.rendering.timestamp.TimestampStyle?,
         onSuccess: (Uri) -> Unit,
-        onError: (Exception) -> Unit,
+        onError: (Exception) -> Unit
     ) {
-        if (!captureInFlight.compareAndSet(false, true)) {
-            ContextCompat.getMainExecutor(context).execute {
-                onError(IllegalStateException("Still saving the previous photo"))
-            }
-            return
-        }
-
-        val temp = try {
-            File.createTempFile("vintix_cap_", ".jpg", context.cacheDir)
-        } catch (e: Exception) {
-            captureInFlight.set(false)
-            ContextCompat.getMainExecutor(context).execute { onError(e) }
-            return
-        }
+        val name = "VINTIX_${System.currentTimeMillis()}"
+        val temp = File.createTempFile(name, ".jpg", context.cacheDir)
         val outputOptions = ImageCapture.OutputFileOptions.Builder(temp).build()
 
-        try {
-            imageCapture.takePicture(
-                outputOptions,
-                photoExecutor,
-                object : ImageCapture.OnImageSavedCallback {
+        imageCapture.takePicture(
+            outputOptions,
+            photoExecutor,
+            object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    val exportStartNs = System.nanoTime()
                     try {
-                        PerformanceTelemetry.updateMemory()
-                        val decoded = BitmapFactory.decodeFile(
-                            temp.absolutePath,
-                            BitmapFactory.Options().apply {
-                                inPreferredConfig = Bitmap.Config.ARGB_8888
-                                inMutable = true
-                            }
+                        val savedUri = output.savedUri ?: Uri.fromFile(temp)
+                        
+                        // 1. Load and handle sensor rotation immediately
+                        var bitmap = loadBitmapFromUri(context, savedUri) 
+                            ?: throw IllegalStateException("Failed to load captured bitmap")
+                        
+                        bitmap = applyExifRotation(temp.absolutePath, bitmap)
+                        
+                        // 2. Crop to aspect ratio & Scale
+                        bitmap = applyCropAndScale(bitmap, cameraProfile)
+
+                        // 3. Apply Retro Pipeline (OpenGL processing)
+                        val processed = RetroPhotoGlPipeline.processBitmap(
+                            bitmap, 
+                            cameraProfile, 
+                            noisePhase
                         )
-                            ?: throw IllegalStateException("Bitmap decode failed")
-                        val oriented = applyExifRotation(temp.absolutePath, decoded)
-                        if (oriented !== decoded) decoded.recycle()
                         
-                        // Apply single-capture randomized variations
-                        val captureProfile = cameraProfile.applyInstability()
-                        val croppedAndScaled = applyCropAndScale(oriented, captureProfile)
-                        if (oriented !== croppedAndScaled) oriented.recycle()
+                        // 4. Save to MediaStore
+                        val finalUri = insertProcessedJpeg(
+                            processed, 
+                            90, // Quality
+                            profileName
+                        )
                         
-                        // Process with Retro Pipeline
-                        val procStartNs = System.nanoTime()
-                        var processed = try {
-                            RetroPhotoGlPipeline.processBitmap(
-                                source = croppedAndScaled,
-                                profile = captureProfile,
-                                noisePhase = noisePhase
-                            )
-                        } finally {
-                            if (!croppedAndScaled.isRecycled) croppedAndScaled.recycle()
-                        }
-                        PerformanceTelemetry.recordProcessing(System.nanoTime() - procStartNs)
-                        
-                        if (timestampStyle != null) {
-                            val stamped = com.srihari.vintix.rendering.timestamp.TimestampRenderer.applyTimestamp(processed, timestampStyle)
-                            if (processed !== stamped) processed.recycle()
-                            processed = stamped
-                        }
-                        
-                        val uri = try {
-                            insertProcessedJpeg(processed, cameraProfile.jpegQuality, profileName)
-                        } finally {
-                            processed.recycle()
-                        }
+                        // Cleanup
                         temp.delete()
-                        
-                        PerformanceTelemetry.recordExport(System.nanoTime() - exportStartNs)
-                        PerformanceTelemetry.updateMemory()
-                        
-                        ContextCompat.getMainExecutor(context).execute { onSuccess(uri) }
+                        if (!bitmap.isRecycled) bitmap.recycle()
+                        if (!processed.isRecycled) processed.recycle()
+
+                        ContextCompat.getMainExecutor(context).execute { onSuccess(finalUri) }
                     } catch (e: Exception) {
+                        Log.e("PhotoCaptureManager", "Error processing captured photo", e)
                         temp.delete()
-                        PerformanceTelemetry.updateMemory()
                         ContextCompat.getMainExecutor(context).execute { onError(e) }
-                    } finally {
-                        captureInFlight.set(false)
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
+                    Log.e("PhotoCaptureManager", "CameraX capture failed", exception)
                     temp.delete()
-                    captureInFlight.set(false)
                     ContextCompat.getMainExecutor(context).execute { onError(exception) }
                 }
-                }
-            )
+            }
+        )
+    }
+
+    fun shutdown() {
+        photoExecutor.shutdown()
+    }
+
+    private fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? {
+        return try {
+            context.contentResolver.openInputStream(uri)?.use { 
+                BitmapFactory.decodeStream(it)
+            }
         } catch (e: Exception) {
-            temp.delete()
-            captureInFlight.set(false)
-            ContextCompat.getMainExecutor(context).execute { onError(e) }
+            Log.e("PhotoCaptureManager", "Failed to load bitmap from $uri", e)
+            null
         }
     }
 

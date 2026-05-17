@@ -164,8 +164,10 @@ fun CameraScreen(
 
     val captureAction = {
         val imageCapture = cameraManager?.imageCapture
-        if (imageCapture != null) {
+        if (imageCapture != null && captureState !is CaptureState.Capturing) {
             val feedback = currentProfile.feedbackBehavior
+            
+            // 1. Immediate UI Feedback
             if (feedback.soundEnabled) {
                 if (feedback.useDigitalBeep) {
                     toneGenerator.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 50)
@@ -176,12 +178,13 @@ fun CameraScreen(
 
             glViewRef?.vintixRenderer?.freezePreview = true
             scope.launch {
-                 delay(feedback.captureFreezeMs)
+                delay(feedback.captureFreezeMs)
                 glViewRef?.vintixRenderer?.freezePreview = false
             }
 
             viewModel.onCaptureStarted(feedback)
 
+            // 2. Capture Execution
             photoCaptureManager.capturePhoto(
                 imageCapture = imageCapture,
                 cameraProfile = currentProfile,
@@ -189,16 +192,20 @@ fun CameraScreen(
                 noisePhase = glViewRef?.vintixRenderer?.noisePhaseSnapshot ?: 0.5f,
                 timestampStyle = appSettings.timestampStyle(),
                 onSuccess = { uri ->
+                    Log.d(TAG, "Capture success: $uri")
                     viewModel.onPhotoCaptured(uri)
+                    // Auto-reset state after a short delay to re-enable shutter
                     scope.launch {
-                        delay(800)
+                        delay(300) 
                         viewModel.resetCaptureState()
                     }
                 },
                 onError = { exception ->
-                    viewModel.onCaptureError(exception.message ?: "Capture Error")
+                    Log.e(TAG, "Capture failed", exception)
+                    viewModel.onCaptureError(exception.message ?: "Capture Failed")
+                    // Always reset state even on error
                     scope.launch {
-                        delay(2000)
+                        delay(1000)
                         viewModel.resetCaptureState()
                     }
                 }
@@ -494,20 +501,10 @@ fun CameraScreen(
             }
 
             // Level Indicator (Authentic)
-            Box(
-                modifier = Modifier
-                    .align(Alignment.Center)
-                    .size(280.dp)
-                    .graphicsLayer { rotationZ = orientationManager.rotationDegrees }
-            ) {
-                val isLevel = Math.abs(orientationManager.rotationDegrees % 90) < 1.0f || Math.abs(orientationManager.rotationDegrees % 90) > 89.0f
-                if (isLevel) {
-                    HorizontalDivider(color = Color(0xFF00FF00).copy(alpha = 0.7f), thickness = 1.5.dp, modifier = Modifier.width(32.dp).align(Alignment.CenterStart))
-                    HorizontalDivider(color = Color(0xFF00FF00).copy(alpha = 0.7f), thickness = 1.5.dp, modifier = Modifier.width(32.dp).align(Alignment.CenterEnd))
-                    // Center crosshair
-                    Box(modifier = Modifier.size(8.dp).border(1.dp, Color(0xFF00FF00).copy(alpha = 0.7f)).align(Alignment.Center))
-                }
-            }
+            LevelIndicator(
+                modifier = Modifier.align(Alignment.Center),
+                rotationDegrees = orientationManager.rotationDegrees
+            )
 
             // Bottom Control Area
             Column(
@@ -577,12 +574,15 @@ fun CameraScreen(
                     }
 
                     // Settings & Quick Toggles
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
                         CameraIconButton(onClick = { viewModel.toggleCamera() }) {
-                            Text("REV", color = Color(0xFFFFC107), fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+                            Text("REV", color = Color(0xFFFFC107), fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
                         }
                         CameraIconButton(onClick = { onNavigateToSettings() }) {
-                            Text("SET", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
+                            Text("SET", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.ExtraBold, fontFamily = FontFamily.Monospace)
                         }
                     }
                 }
@@ -645,6 +645,45 @@ fun CameraScreen(
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun LevelIndicator(
+    modifier: Modifier = Modifier,
+    rotationDegrees: Float
+) {
+    val isLevel by remember(rotationDegrees) {
+        derivedStateOf {
+            val r = Math.abs(rotationDegrees % 90)
+            r < 1.0f || r > 89.0f
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .size(280.dp)
+            .graphicsLayer { rotationZ = rotationDegrees }
+    ) {
+        if (isLevel) {
+            HorizontalDivider(
+                color = Color(0xFF00FF00).copy(alpha = 0.7f),
+                thickness = 1.5.dp,
+                modifier = Modifier.width(32.dp).align(Alignment.CenterStart)
+            )
+            HorizontalDivider(
+                color = Color(0xFF00FF00).copy(alpha = 0.7f),
+                thickness = 1.5.dp,
+                modifier = Modifier.width(32.dp).align(Alignment.CenterEnd)
+            )
+            // Center crosshair
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .border(1.dp, Color(0xFF00FF00).copy(alpha = 0.7f))
+                    .align(Alignment.Center)
+            )
         }
     }
 }

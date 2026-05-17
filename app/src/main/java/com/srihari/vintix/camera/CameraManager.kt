@@ -166,6 +166,8 @@ class CameraManager(private val context: Context) {
      * The surface receives camera preview frames that are rendered
      * through the OpenGL shader pipeline.
      */
+    private val ioExecutor = Executors.newSingleThreadExecutor()
+
     suspend fun startCamera(
         lifecycleOwner: LifecycleOwner,
         surface: Surface
@@ -182,9 +184,11 @@ class CameraManager(private val context: Context) {
         val rotation = targetRotation()
         orientationEventListener.enable()
 
+        // Use a more flexible resolution strategy to avoid stretching.
+        // We let CameraX choose the best resolution for the sensor, 
+        // and SurfaceTexture's transform matrix will handle the mapping.
         val preview = Preview.Builder()
             .setTargetRotation(rotation)
-            .setTargetResolution(android.util.Size(1280, 720)) // Optimized resolution for 60fps
             .build()
             .also {
                 it.surfaceProvider = Preview.SurfaceProvider { request ->
@@ -201,7 +205,7 @@ class CameraManager(private val context: Context) {
         val imageCaptureUseCase = ImageCapture.Builder()
             .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
             .setTargetRotation(rotation)
-            .setIoExecutor(Executors.newSingleThreadExecutor()) // Offload IO from main thread
+            .setIoExecutor(ioExecutor) // Reuse executor
             .build()
 
         val cameraSelector = CameraSelector.Builder()
@@ -296,6 +300,12 @@ class CameraManager(private val context: Context) {
             camera = null
             _isBound = false
         }
+    }
+
+    /** Releases resources, including the background executor. */
+    fun release() {
+        stopCamera()
+        ioExecutor.shutdown()
     }
 
     private fun runOnMain(block: () -> Unit) {

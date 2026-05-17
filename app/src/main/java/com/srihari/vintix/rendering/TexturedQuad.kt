@@ -23,15 +23,14 @@ class TexturedQuad {
 
         /**
          * Vertex data: position (x,y) + texcoord (u,v)
-         * Covers the full NDC quad from (-1,-1) to (1,1).
-         * Texture coords: bottom-left origin, flipped for Android.
+         * Standard OpenGL coordinates: (0,0) at bottom-left.
          */
         private val VERTEX_DATA = floatArrayOf(
             // x,    y,    u,   v
-            -1f, -1f,  0f, 1f,   // bottom-left
-             1f, -1f,  1f, 1f,   // bottom-right
-            -1f,  1f,  0f, 0f,   // top-left
-             1f,  1f,  1f, 0f    // top-right
+            -1f, -1f,  0f, 0f,   // bottom-left
+             1f, -1f,  1f, 0f,   // bottom-right
+            -1f,  1f,  0f, 1f,   // top-left
+             1f,  1f,  1f, 1f    // top-right
         )
 
         private const val VERTEX_COUNT = 4

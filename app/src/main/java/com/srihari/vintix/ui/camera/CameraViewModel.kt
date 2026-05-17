@@ -146,6 +146,8 @@ class CameraViewModel : ViewModel() {
     }
 
     fun resetCaptureState() {
+        // Reset to Idle to re-enable the shutter button.
+        // This is safe because we only call it after Success, Error, or a safety timeout.
         _captureState.value = CaptureState.Idle
     }
 }

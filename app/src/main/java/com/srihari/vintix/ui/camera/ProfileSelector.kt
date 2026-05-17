@@ -40,36 +40,39 @@ fun ProfileSelector(
         }
     }
 
-    LazyRow(
-        state = listState,
-        flingBehavior = snappingBehavior,
-        modifier = modifier.height(60.dp),
-        contentPadding = PaddingValues(horizontal = 150.dp), // Center the selected item
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        items(profiles) { profileName ->
-            val isSelected = profileName == selectedProfile
-            
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(2.dp))
-                    .background(
-                        if (isSelected) Color(0xFFFF8A1F) // Vintix Accent
-                        else Color.White.copy(alpha = 0.08f)
+    // Use a fixed height and center-focused layout
+    Box(modifier = modifier.fillMaxWidth().height(64.dp)) {
+        LazyRow(
+            state = listState,
+            flingBehavior = snappingBehavior,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(horizontal = 160.dp), // Approximate centering
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items(profiles) { profileName ->
+                val isSelected = profileName == selectedProfile
+                
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(
+                            if (isSelected) Color(0xFFFF8A1F) // Vintix Accent
+                            else Color.White.copy(alpha = 0.12f)
+                        )
+                        .clickable { onProfileSelected(profileName) }
+                        .padding(horizontal = 16.dp, vertical = 8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = profileName.uppercase(),
+                        color = if (isSelected) Color.Black else Color.White,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 0.5.sp
                     )
-                    .clickable { onProfileSelected(profileName) }
-                    .padding(horizontal = 14.dp, vertical = 8.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = profileName.uppercase(),
-                    color = if (isSelected) Color.Black else Color.White.copy(alpha = 0.7f),
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    letterSpacing = 1.sp
-                )
+                }
             }
         }
     }

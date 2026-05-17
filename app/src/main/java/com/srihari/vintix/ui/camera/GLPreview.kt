@@ -164,7 +164,7 @@ fun GLPreview(
             Log.d(TAG, "onDispose — stopping camera, releasing surface, removing GL view")
             isDisposed.set(true)
             lifecycleOwner.lifecycle.removeObserver(observer)
-            cameraManager.stopCamera()
+            cameraManager.release()
             activeSurface.getAndSet(null)?.release()
 
             // Explicitly remove GLSurfaceView from its parent to prevent the
@@ -183,7 +183,7 @@ fun GLPreview(
         modifier = modifier.fillMaxSize(),
         onRelease = {
             Log.d(TAG, "AndroidView.onRelease — stopping camera")
-            cameraManager.stopCamera()
+            cameraManager.release()
         }
     )
 }

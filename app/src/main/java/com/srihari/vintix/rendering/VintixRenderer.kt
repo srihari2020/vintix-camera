@@ -36,6 +36,7 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
     private lateinit var quad: TexturedQuad
     private var oesTextureId: Int = 0
     private var textureUniformLocation: Int = 0
+    private var uMirrorLoc: Int = -1
     private var texMatrixUniformLocation: Int = 0
     private var profileUniforms: CameraProfileUniformHandles? = null
     private var noisePhase: Float = 0f
@@ -82,7 +83,7 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             Matrix.setIdentityM(texTransformMatrix, 0)
 
             shaderProgram = ShaderProgram()
-            val vs = shaderProgram.compile(GLES20.GL_VERTEX_SHADER, CAMERA_VERTEX_SHADER)
+            val vs = shaderProgram.compile(GLES20.GL_VERTEX_SHADER, RetroPipelineShaders.CAMERA_VERTEX_SHADER)
             val fs = shaderProgram.compile(GLES20.GL_FRAGMENT_SHADER, RetroPipelineShaders.fragmentShaderExternalOes())
 
             if (vs == 0 || fs == 0 || !shaderProgram.link(vs, fs)) {
@@ -90,8 +91,9 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
             }
 
             textureUniformLocation = shaderProgram.getUniformLocation("uTexture")
-            texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
-            profileUniforms = CameraProfileUniformHandles(shaderProgram)
+        texMatrixUniformLocation = shaderProgram.getUniformLocation("uTexMatrix")
+        uMirrorLoc = shaderProgram.getUniformLocation("uMirror")
+        profileUniforms = CameraProfileUniformHandles(shaderProgram)
 
             quad = TexturedQuad()
             oesTextureId = createOESTexture()
@@ -139,16 +141,17 @@ class VintixRenderer : GLSurfaceView.Renderer, SurfaceTexture.OnFrameAvailableLi
 
             shaderProgram.use()
             
-            // Apply mirroring for front camera preview if not already handled by the matrix
-            if (isFrontCamera) {
-                // Front camera should be mirrored for a "mirror-like" preview.
-                // We apply a horizontal flip to the texture matrix.
-                Matrix.translateM(texTransformMatrix, 0, 0.5f, 0.5f, 0f)
-                Matrix.scaleM(texTransformMatrix, 0, -1f, 1f, 1f)
-                Matrix.translateM(texTransformMatrix, 0, -0.5f, -0.5f, 0f)
-            }
+            // CameraX provides a transform matrix via SurfaceTexture.getTransformMatrix.
+            // This matrix already handles rotation and mirroring for the specific lens facing.
+            // For a "mirror-like" selfie preview, we only apply extra horizontal flipping
+            // if the matrix doesn't already contain it.
             
             GLES20.glUniformMatrix4fv(texMatrixUniformLocation, 1, false, texTransformMatrix, 0)
+            
+            // Mirror horizontally for front camera to get a mirror-like preview
+            if (uMirrorLoc >= 0) {
+                GLES20.glUniform1i(uMirrorLoc, if (isFrontCamera) 1 else 0)
+            }
 
             noisePhase = (noisePhase + 0.019f).rem(1f)
             noisePhaseSnapshot = noisePhase
