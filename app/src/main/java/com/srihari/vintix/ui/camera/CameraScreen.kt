@@ -55,6 +55,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
@@ -123,6 +124,7 @@ fun CameraScreen(
 
     val isCameraPermissionGranted by viewModel.isCameraPermissionGranted.collectAsState()
     val captureState by viewModel.captureState.collectAsState()
+    val isCaptureBusy by viewModel.isCaptureBusy.collectAsState()
     val cameraAvailability by viewModel.cameraAvailability.collectAsState()
     val isFrontCamera by viewModel.isFrontCamera.collectAsState()
     val flashMode by viewModel.flashMode.collectAsState()
@@ -160,6 +162,7 @@ fun CameraScreen(
     DisposableEffect(Unit) {
         orientationManager.start()
         onDispose {
+            viewModel.releaseCaptureLocks()
             orientationManager.stop()
             shutterSound.release()
             toneGenerator.release()
@@ -222,12 +225,17 @@ fun CameraScreen(
         }
     }
 
-    val captureAction = {
+    val captureAction: () -> Unit = {
         val capture = cameraManager?.imageCapture
-        if (capture != null && cameraAvailability is CameraAvailability.Ready && countdownValue == 0) {
+        if (
+            capture != null &&
+            cameraAvailability is CameraAvailability.Ready &&
+            countdownValue == 0 &&
+            !isCaptureBusy
+        ) {
             val feedback = activeProfile.feedbackBehavior
             if (feedback.hapticFeedback) {
-                view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                view.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
             }
             if (feedback.soundEnabled) {
                 if (feedback.useDigitalBeep) {
@@ -246,18 +254,11 @@ fun CameraScreen(
                 onSuccess = { uri ->
                     lastSavedUri = uri
                     viewModel.onPhotoCaptured(uri)
-                    scope.launch {
-                        delay(180)
-                        viewModel.resetCaptureState()
-                    }
                 },
                 onError = { exception ->
                     viewModel.onCaptureError(exception.message ?: "Capture failed")
-                    scope.launch {
-                        delay(500)
-                        viewModel.resetCaptureState()
-                    }
                 },
+                onFinished = { viewModel.finishCapture() },
             )
         }
     }
@@ -360,12 +361,20 @@ fun CameraScreen(
                 modifier = Modifier.align(Alignment.CenterEnd),
             )
 
+            val isShutterEnabled by remember(cameraAvailability, countdownValue, isCaptureBusy) {
+                derivedStateOf {
+                    cameraAvailability is CameraAvailability.Ready &&
+                        countdownValue == 0 &&
+                        !isCaptureBusy
+                }
+            }
+
             BottomControls(
                 profiles = profiles,
                 selectedProfile = selectedProfileName,
                 onProfileSelected = { selectedProfileName = it },
                 lastSavedUri = lastSavedUri,
-                isShutterEnabled = cameraAvailability is CameraAvailability.Ready && countdownValue == 0 && captureState !is CaptureState.Capturing,
+                isShutterEnabled = isShutterEnabled,
                 countdownValue = countdownValue,
                 onGalleryClick = onNavigateToGallery,
                 onShutterClick = {

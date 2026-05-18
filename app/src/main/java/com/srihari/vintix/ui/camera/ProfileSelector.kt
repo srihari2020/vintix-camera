@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.srihari.vintix.effects.CameraProfile
+import com.srihari.vintix.effects.ProcessingMode
 import com.srihari.vintix.effects.RetroBitmapProcessor
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
@@ -232,6 +233,7 @@ private fun createProcessedThumbnail(profile: CameraProfile): Bitmap {
         input = bitmap,
         profile = profile.copy(exportResolution = null),
         timestampStyle = null,
+        mode = ProcessingMode.PREVIEW,
     )
     if (processed !== bitmap) bitmap.recycle()
     return processed

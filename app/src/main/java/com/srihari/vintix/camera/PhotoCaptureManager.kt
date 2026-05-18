@@ -15,6 +15,7 @@ import androidx.camera.core.ImageCaptureException
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
 import com.srihari.vintix.effects.CameraProfile
+import com.srihari.vintix.effects.ProcessingMode
 import com.srihari.vintix.effects.RetroBitmapProcessor
 import com.srihari.vintix.effects.timestamp.TimestampStyle
 import java.io.File
@@ -24,10 +25,18 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class PhotoCaptureManager(private val context: Context) {
     private val captureCallbackExecutor = Executors.newSingleThreadExecutor()
-    private val processingExecutor = Executors.newFixedThreadPool(2)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val captureInFlight = AtomicBoolean(false)
 
     fun capturePhoto(
         imageCapture: ImageCapture,
@@ -36,50 +45,77 @@ class PhotoCaptureManager(private val context: Context) {
         timestampStyle: TimestampStyle?,
         onSuccess: (Uri) -> Unit,
         onError: (Exception) -> Unit,
+        onFinished: () -> Unit,
     ) {
-        val tempFile = File.createTempFile("vintix_capture_", ".jpg", context.cacheDir)
+        if (!captureInFlight.compareAndSet(false, true)) {
+            postError(onError, IllegalStateException("Capture already in progress"))
+            postFinished(onFinished)
+            return
+        }
+
+        val tempFile = try {
+            File.createTempFile("vintix_capture_", ".jpg", context.cacheDir)
+        } catch (t: Throwable) {
+            captureInFlight.set(false)
+            postError(onError, if (t is Exception) t else Exception(t))
+            postFinished(onFinished)
+            return
+        }
+
         val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile)
-            .setMetadata(ImageCapture.Metadata().apply {
-                isReversedHorizontal = false
-            })
+            .setMetadata(ImageCapture.Metadata().apply { isReversedHorizontal = false })
             .build()
 
-        imageCapture.takePicture(
-            outputOptions,
-            captureCallbackExecutor,
-            object : ImageCapture.OnImageSavedCallback {
-                override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    try {
-                        processingExecutor.execute {
-                            processAndPublish(
-                                tempFile = tempFile,
-                                cameraProfile = cameraProfile,
-                                profileName = profileName,
-                                timestampStyle = timestampStyle,
-                                onSuccess = onSuccess,
-                                onError = onError,
-                            )
+        try {
+            imageCapture.takePicture(
+                outputOptions,
+                captureCallbackExecutor,
+                object : ImageCapture.OnImageSavedCallback {
+                    override fun onImageSaved(output: ImageCapture.OutputFileResults) {
+                        scope.launch {
+                            try {
+                                processAndPublish(
+                                    tempFile = tempFile,
+                                    cameraProfile = cameraProfile,
+                                    profileName = profileName,
+                                    timestampStyle = timestampStyle,
+                                    onSuccess = onSuccess,
+                                    onError = onError,
+                                )
+                            } catch (t: Throwable) {
+                                Log.e(TAG, "Unexpected capture failure", t)
+                                postError(onError, if (t is Exception) t else Exception(t))
+                            } finally {
+                                tempFile.delete()
+                                captureInFlight.set(false)
+                                postFinished(onFinished)
+                            }
                         }
-                    } catch (t: Throwable) {
-                        tempFile.delete()
-                        postError(onError, Exception("Executor rejected task", t))
                     }
-                }
 
-                override fun onError(exception: ImageCaptureException) {
-                    tempFile.delete()
-                    postError(onError, exception)
-                }
-            },
-        )
+                    override fun onError(exception: ImageCaptureException) {
+                        tempFile.delete()
+                        captureInFlight.set(false)
+                        postError(onError, exception)
+                        postFinished(onFinished)
+                    }
+                },
+            )
+        } catch (t: Throwable) {
+            tempFile.delete()
+            captureInFlight.set(false)
+            postError(onError, if (t is Exception) t else Exception(t))
+            postFinished(onFinished)
+        }
     }
 
     fun shutdown() {
+        scope.cancel()
+        captureInFlight.set(false)
         captureCallbackExecutor.shutdown()
-        processingExecutor.shutdown()
     }
 
-    private fun processAndPublish(
+    private suspend fun processAndPublish(
         tempFile: File,
         cameraProfile: CameraProfile,
         profileName: String,
@@ -93,43 +129,48 @@ class PhotoCaptureManager(private val context: Context) {
         var processed: Bitmap? = null
 
         try {
-            decoded = BitmapFactory.decodeFile(tempFile.absolutePath)
-                ?: throw IllegalStateException("Failed to decode captured JPEG")
+            val prepared = withContext(Dispatchers.Default) {
+                decoded = BitmapFactory.decodeFile(tempFile.absolutePath)
+                    ?: throw IllegalStateException("Failed to decode captured JPEG")
 
-            oriented = applyExifRotation(tempFile.absolutePath, decoded)
-            if (oriented !== decoded) {
-                decoded.recycle()
-                decoded = null
+                oriented = applyExifRotation(tempFile.absolutePath, decoded!!)
+                if (oriented !== decoded) {
+                    decoded?.recycle()
+                    decoded = null
+                }
+
+                cropped = cropAndScale(oriented!!, cameraProfile)
+                if (cropped !== oriented) {
+                    oriented?.recycle()
+                    oriented = null
+                }
+
+                processed = RetroBitmapProcessor.process(
+                    input = cropped!!,
+                    profile = cameraProfile,
+                    timestampStyle = timestampStyle,
+                    captureDate = Date(),
+                    mode = ProcessingMode.CAPTURE,
+                )
+                if (processed !== cropped) {
+                    cropped?.recycle()
+                    cropped = null
+                }
+                processed!!
             }
 
-            cropped = cropAndScale(oriented, cameraProfile)
-            if (cropped !== oriented) {
-                oriented.recycle()
-                oriented = null
+            val finalUri = withContext(Dispatchers.IO) {
+                insertProcessedJpeg(
+                    bitmap = prepared,
+                    quality = cameraProfile.jpegQuality,
+                    profileName = profileName,
+                )
             }
-
-            processed = RetroBitmapProcessor.process(
-                input = cropped,
-                profile = cameraProfile,
-                timestampStyle = timestampStyle,
-                captureDate = Date(),
-            )
-            if (processed !== cropped) {
-                cropped.recycle()
-                cropped = null
-            }
-
-            val finalUri = insertProcessedJpeg(
-                bitmap = processed,
-                quality = cameraProfile.jpegQuality,
-                profileName = profileName,
-            )
             postSuccess(onSuccess, finalUri)
         } catch (t: Throwable) {
             Log.e(TAG, "Capture processing failed", t)
             postError(onError, if (t is Exception) t else Exception(t))
         } finally {
-            tempFile.delete()
             decoded?.recycle()
             oriented?.recycle()
             cropped?.recycle()
@@ -189,7 +230,11 @@ class PhotoCaptureManager(private val context: Context) {
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
 
-    private fun insertProcessedJpeg(bitmap: Bitmap, quality: Int, profileName: String): Uri {
+    private fun insertProcessedJpeg(
+        bitmap: Bitmap,
+        quality: Int,
+        profileName: String,
+    ): Uri {
         val now = Date()
         val timestamp = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(now)
         val fileName = "$FILENAME_PREFIX$timestamp.jpg"
@@ -214,8 +259,9 @@ class PhotoCaptureManager(private val context: Context) {
 
         val tempExifFile = File.createTempFile("vintix_export_", ".jpg", context.cacheDir)
         try {
+            val exportQuality = quality.coerceIn(35, 96)
             FileOutputStream(tempExifFile).use { output ->
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(35, 96), output)) {
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, exportQuality, output)) {
                     throw IllegalStateException("JPEG compression failed")
                 }
             }
@@ -260,6 +306,10 @@ class PhotoCaptureManager(private val context: Context) {
 
     private fun postError(onError: (Exception) -> Unit, exception: Exception) {
         ContextCompat.getMainExecutor(context).execute { onError(exception) }
+    }
+
+    private fun postFinished(onFinished: () -> Unit) {
+        ContextCompat.getMainExecutor(context).execute { onFinished() }
     }
 
     private companion object {

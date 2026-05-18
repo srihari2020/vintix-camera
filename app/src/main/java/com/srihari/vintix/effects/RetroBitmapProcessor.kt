@@ -12,12 +12,23 @@ import kotlin.math.max
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
 
+enum class ProcessingMode {
+    /** Full sensor pipeline including JPEG round-trip. */
+    CAPTURE,
+    /** Fast path for filter selector thumbnails — skips heavy JPEG encode/decode. */
+    PREVIEW,
+}
+
 object RetroBitmapProcessor {
+    private val bloomPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+    private val jpegStream = ThreadLocal.withInitial { ByteArrayOutputStream(256 * 1024) }
+
     fun process(
         input: Bitmap,
         profile: CameraProfile,
         timestampStyle: TimestampStyle?,
         captureDate: Date = Date(),
+        mode: ProcessingMode = ProcessingMode.CAPTURE,
     ): Bitmap {
         val activeProfile = profile.applyInstability()
         val original = input
@@ -33,15 +44,15 @@ object RetroBitmapProcessor {
         working = applyCamcorderSmear(working, activeProfile.horizontalSmear)
         working = applyScanlines(working, activeProfile.scanlineStrength)
         working = applySharpen(working, activeProfile.sharpen)
-        working = applyCompressionBreakup(working, activeProfile)
+        working = applyCompressionBreakup(working, activeProfile, mode)
 
-        if (timestampStyle != null) {
+        if (timestampStyle != null && mode == ProcessingMode.CAPTURE) {
             next = TimestampRenderer.applyTimestamp(working, timestampStyle, captureDate)
             if (next !== working && working !== original) working.recycle()
             working = next
         }
 
-        next = simulateJpegArtifacts(working, activeProfile)
+        next = simulateJpegArtifacts(working, activeProfile, mode)
         if (next !== working && working !== original) working.recycle()
         return next
     }
@@ -70,7 +81,7 @@ object RetroBitmapProcessor {
 
         val centerX = (width - 1) * 0.5f
         val centerY = (height - 1) * 0.5f
-        val maxDistance = sqrt(centerX * centerX + centerY * centerY).coerceAtLeast(1f)
+        val maxDistanceSq = (centerX * centerX + centerY * centerY).coerceAtLeast(1f)
 
         for (y in 0 until height) {
             val row = y * width
@@ -85,15 +96,10 @@ object RetroBitmapProcessor {
 
                 val dx = x - centerX
                 val dy = y - centerY
-                val distance = sqrt(dx * dx + dy * dy) / maxDistance
+                val distance = sqrt((dx * dx + dy * dy) / maxDistanceSq)
 
-                // Edge falloff (plastic lens softness at edges)
                 val edgeSoftness = smoothstep(0.4f, 1.0f, distance)
-
-                // Highlight bloom softness
                 val highlightSoftness = smoothstep(0.65f, 1.0f, luma)
-
-                // Blend them, keeping center details sharp if not a highlight
                 val mask = max(edgeSoftness * 0.8f, highlightSoftness)
 
                 originalPixels[index] = blend(base, blur, amount * mask)
@@ -113,9 +119,24 @@ object RetroBitmapProcessor {
 
         val centerX = (width - 1) * 0.5f
         val centerY = (height - 1) * 0.5f
-        val maxDistance = sqrt(centerX * centerX + centerY * centerY).coerceAtLeast(1f)
+        val maxDistanceSq = (centerX * centerX + centerY * centerY).coerceAtLeast(1f)
         val seed = (System.nanoTime() xor (width.toLong() shl 21) xor height.toLong()).toInt()
         val coarseSize = (1 + profile.grainCoarseness * 7f).roundToInt().coerceIn(1, 8)
+        val crawlPhase = ((seed ushr 8) and 0x7).toFloat()
+
+        val vignetteFactors = FloatArray(width * height)
+        val flashDistanceFactors = FloatArray(width * height)
+        for (y in 0 until height) {
+            val row = y * width
+            val dy = y - centerY
+            for (x in 0 until width) {
+                val dx = x - centerX
+                val distance = sqrt((dx * dx + dy * dy) / maxDistanceSq)
+                val index = row + x
+                vignetteFactors[index] = 1f - profile.vignette * smoothstep(0.42f, 0.98f, distance)
+                flashDistanceFactors[index] = profile.flashBurn * (1f - smoothstep(0.0f, 0.72f, distance))
+            }
+        }
 
         for (y in 0 until height) {
             val row = y * width
@@ -146,74 +167,77 @@ object RetroBitmapProcessor {
                 val mid = smoothstep(0.18f, 0.78f, luma) * (1f - smoothstep(0.78f, 1.0f, luma))
                 val highlight = smoothstep(0.64f, 1.0f, luma)
 
-                val fadeLift = profile.fadedBlacks * shadow * 0.18f
-                val hazeLift = profile.haze * (0.08f + shadow * 0.08f)
+                val fadeLift = profile.fadedBlacks * shadow * 0.22f
+                val hazeLift = profile.haze * (0.10f + shadow * 0.10f)
                 val pastel = profile.pastelLift * highlight
 
-                r = r - profile.shadowCrush * shadow * 0.12f + fadeLift + hazeLift
-                g = g - profile.shadowCrush * shadow * 0.11f + fadeLift + hazeLift
-                b = b - profile.shadowCrush * shadow * 0.10f + fadeLift + hazeLift
+                r = r - profile.shadowCrush * shadow * 0.16f + fadeLift + hazeLift
+                g = g - profile.shadowCrush * shadow * 0.14f + fadeLift + hazeLift
+                b = b - profile.shadowCrush * shadow * 0.12f + fadeLift + hazeLift
 
-                r += profile.warmth * (0.052f + mid * 0.030f)
-                g += profile.warmth * 0.010f
-                b -= profile.warmth * 0.050f
+                // Dirty blacks — lift then crush for ugly rolloff
+                val blackLift = profile.fadedBlacks * shadow * 0.08f
+                r += blackLift - shadow * profile.shadowCrush * 0.04f
+                g += blackLift - shadow * profile.shadowCrush * 0.03f
+                b += blackLift - shadow * profile.shadowCrush * 0.02f
 
-                r += profile.magentaShift * 0.040f
-                b += profile.magentaShift * 0.054f
-                g += profile.cyanShift * 0.034f
-                b += profile.cyanShift * 0.034f
+                r += profile.warmth * (0.058f + mid * 0.034f)
+                g += profile.warmth * 0.008f
+                b -= profile.warmth * 0.058f
 
-                r += shadow * profile.shadowBlue * -0.030f
-                g += shadow * profile.shadowGreen * 0.036f
-                b += shadow * profile.shadowBlue * 0.070f
-                r += highlight * profile.highlightRed * 0.075f
-                g += highlight * profile.highlightGreen * 0.060f
-                b += highlight * profile.highlightBlue * 0.075f
+                r += profile.magentaShift * 0.055f + shadow * profile.magentaShift * 0.04f
+                b += profile.magentaShift * 0.068f + shadow * profile.magentaShift * 0.05f
+                g += profile.cyanShift * 0.040f
+                b += profile.cyanShift * 0.042f + highlight * profile.cyanShift * 0.03f
 
-                b += profile.coolHighlights * highlight * 0.090f
-                r -= profile.coolHighlights * highlight * 0.035f
-                r += pastel * 0.08f
-                g += pastel * 0.08f
-                b += pastel * 0.08f
+                r += shadow * profile.shadowBlue * -0.038f
+                g += shadow * profile.shadowGreen * 0.040f
+                b += shadow * profile.shadowBlue * 0.082f
+                r += highlight * profile.highlightRed * 0.085f
+                g += highlight * profile.highlightGreen * 0.068f
+                b += highlight * profile.highlightBlue * 0.085f
 
-                val dx = x - centerX
-                val dy = y - centerY
-                val distance = sqrt(dx * dx + dy * dy) / maxDistance
-                val vignette = 1f - profile.vignette * smoothstep(0.42f, 0.98f, distance)
-                val flash = profile.flashBurn *
-                    (1f - smoothstep(0.0f, 0.72f, distance)) *
-                    (0.18f + highlight * 0.82f)
+                b += profile.coolHighlights * highlight * 0.105f
+                r -= profile.coolHighlights * highlight * 0.048f
+                r += pastel * 0.09f
+                g += pastel * 0.09f
+                b += pastel * 0.09f
 
-                r = r * vignette + flash * (0.15f + profile.warmth * 0.04f)
-                g = g * vignette + flash * 0.12f
-                b = b * vignette + flash * 0.08f
+                val vignette = vignetteFactors[index]
+                val flash = flashDistanceFactors[index] * (0.18f + highlight * 0.82f)
 
+                r = r * vignette + flash * (0.18f + profile.warmth * 0.05f)
+                g = g * vignette + flash * 0.14f
+                b = b * vignette + flash * 0.09f
+
+                val crawlX = (x / 8) + crawlPhase.toInt()
+                val crawlY = (y / 8)
                 val fineNoise = noise(seed, x, y, 0) - 0.5f
                 val coarseNoise = noise(seed, x / coarseSize, y / coarseSize, 4) - 0.5f
-                val clusterNoise = noise(seed, x / (coarseSize * 2), y / (coarseSize * 2), 5) - 0.5f
-                
-                // Sensor noise shape: exponential curve based on luma to crush darks with noise
+                val clusterNoise = noise(seed, crawlX, crawlY, 5) - 0.5f
+                val crawlNoise = noise(seed, crawlX + 3, crawlY + 1, 6) - 0.5f
+
                 val shadowNoiseMask = (1f - luma).coerceIn(0f, 1f)
                 val shadowNoiseMaskSquared = shadowNoiseMask * shadowNoiseMask
-                val noiseShape = 0.010f + shadowNoiseMaskSquared * 0.220f + (1f - highlight) * 0.015f
-                
-                val monoNoise = (fineNoise * (1f - profile.grainCoarseness * 0.65f) + 
-                                 coarseNoise * profile.grainCoarseness * 0.45f +
-                                 clusterNoise * profile.grainCoarseness * 0.2f) * 
-                                 profile.grain * noiseShape
-                                 
-                val chromaStrength = profile.chromaNoise * (0.005f + shadowNoiseMaskSquared * 0.16f)
-                
-                // Low light RGB instability (blotches of purple/green in extreme shadows)
-                val instabilityR = (noise(seed, x / 4, y / 4, 1) - 0.5f) * chromaStrength * 1.4f
-                val instabilityG = (noise(seed, x / 4, y / 4, 2) - 0.5f) * chromaStrength * 0.8f
-                val instabilityB = (noise(seed, x / 4, y / 4, 3) - 0.5f) * chromaStrength * 1.6f
+                val noiseShape = 0.012f + shadowNoiseMaskSquared * 0.28f + (1f - highlight) * 0.018f
+
+                val monoNoise = (
+                    fineNoise * (1f - profile.grainCoarseness * 0.55f) +
+                        coarseNoise * profile.grainCoarseness * 0.50f +
+                        clusterNoise * profile.grainCoarseness * 0.28f +
+                        crawlNoise * profile.grainCoarseness * 0.18f
+                    ) * profile.grain * noiseShape
+
+                val chromaStrength = profile.chromaNoise * (0.006f + shadowNoiseMaskSquared * 0.20f)
+                val instabilityR = (noise(seed, crawlX, crawlY, 1) - 0.5f) * chromaStrength * 1.6f
+                val instabilityG = (noise(seed, crawlX, crawlY, 2) - 0.5f) * chromaStrength * 0.9f
+                val instabilityB = (noise(seed, crawlX, crawlY, 3) - 0.5f) * chromaStrength * 1.8f
 
                 r += monoNoise + instabilityR
                 g += monoNoise + instabilityG
                 b += monoNoise + instabilityB
 
-                val clipPoint = (1f - profile.highlightClip * 0.18f).coerceIn(0.80f, 1f)
+                val clipPoint = (1f - profile.highlightClip * 0.22f).coerceIn(0.72f, 1f)
                 r = clipHighlight(r, clipPoint)
                 g = clipHighlight(g, clipPoint)
                 b = clipHighlight(b, clipPoint)
@@ -234,33 +258,41 @@ object RetroBitmapProcessor {
         val maskPixels = IntArray(width * height)
         source.getPixels(sourcePixels, 0, width, 0, 0, width, height)
 
+        val threshold = profile.bloomThreshold
+        val thresholdSpan = 0.12f
+
         for (index in sourcePixels.indices) {
             val color = sourcePixels[index]
             val r = ((color ushr 16) and 0xff) / 255f
             val g = ((color ushr 8) and 0xff) / 255f
             val b = (color and 0xff) / 255f
-            val highlight = smoothstep(profile.bloomThreshold, profile.bloomThreshold + 0.15f, luminance(r, g, b))
-            val alpha = (highlight * profile.bloom * 185f).roundToInt().coerceIn(0, 220)
-            val red = (246 + profile.bloomWarmth * 34f + profile.highlightRed * 24f - profile.coolHighlights * 12f)
+            val luma = luminance(r, g, b)
+            // Bloom ONLY on bright highlights — never darken midtones/shadows
+            val highlight = smoothstep(threshold, threshold + thresholdSpan, luma)
+            if (highlight <= 0.001f) {
+                maskPixels[index] = 0
+                continue
+            }
+            val alpha = (highlight * highlight * profile.bloom * 200f).roundToInt().coerceIn(0, 235)
+            val red = (246 + profile.bloomWarmth * 38f + profile.highlightRed * 28f - profile.coolHighlights * 16f)
                 .roundToInt()
                 .coerceIn(0, 255)
-            val green = (244 + profile.bloomWarmth * 18f + profile.highlightGreen * 20f + profile.coolHighlights * 2f)
+            val green = (244 + profile.bloomWarmth * 20f + profile.highlightGreen * 22f + profile.coolHighlights * 4f)
                 .roundToInt()
                 .coerceIn(0, 255)
-            val blue = (232 - profile.bloomWarmth * 30f + profile.highlightBlue * 28f + profile.coolHighlights * 36f)
+            val blue = (228 - profile.bloomWarmth * 36f + profile.highlightBlue * 32f + profile.coolHighlights * 42f)
                 .roundToInt()
                 .coerceIn(0, 255)
             maskPixels[index] = (alpha shl 24) or (red shl 16) or (green shl 8) or blue
         }
 
         val mask = Bitmap.createBitmap(maskPixels, width, height, Bitmap.Config.ARGB_8888)
-        val divisor = (12f - profile.bloomSpread * 8f).roundToInt().coerceIn(3, 12)
+        val divisor = (10f - profile.bloomSpread * 7f).roundToInt().coerceIn(3, 10)
         val smallW = max(1, width / divisor)
         val smallH = max(1, height / divisor)
-        val paint = Paint(Paint.FILTER_BITMAP_FLAG)
         val small = Bitmap.createScaledBitmap(mask, smallW, smallH, true)
         val bloom = Bitmap.createScaledBitmap(small, width, height, true)
-        Canvas(source).drawBitmap(bloom, 0f, 0f, paint)
+        Canvas(source).drawBitmap(bloom, 0f, 0f, bloomPaint)
         mask.recycle()
         small.recycle()
         bloom.recycle()
@@ -273,7 +305,7 @@ object RetroBitmapProcessor {
         val height = source.height
         val pixels = IntArray(width * height)
         source.getPixels(pixels, 0, width, 0, 0, width, height)
-        val decay = (0.88f + profile.ccdStreak * 0.09f).coerceIn(0.88f, 0.97f)
+        val decay = (0.86f + profile.ccdStreak * 0.09f).coerceIn(0.86f, 0.97f)
 
         for (y in 0 until height) {
             var trail = 0f
@@ -282,18 +314,18 @@ object RetroBitmapProcessor {
                 val index = row + x
                 val color = pixels[index]
                 val luma = luminance255((color ushr 16) and 0xff, (color ushr 8) and 0xff, color and 0xff)
-                val energy = smoothstep(0.74f, 1.0f, luma) * profile.ccdStreak
+                val energy = smoothstep(0.72f, 1.0f, luma) * profile.ccdStreak
                 trail = max(energy, trail * decay)
-                if (trail > 0.01f) pixels[index] = addGlow(color, trail * 0.18f, profile)
+                if (trail > 0.01f) pixels[index] = addGlow(color, trail * 0.22f, profile)
             }
             trail = 0f
             for (x in width - 1 downTo 0) {
                 val index = row + x
                 val color = pixels[index]
                 val luma = luminance255((color ushr 16) and 0xff, (color ushr 8) and 0xff, color and 0xff)
-                val energy = smoothstep(0.74f, 1.0f, luma) * profile.ccdStreak
+                val energy = smoothstep(0.72f, 1.0f, luma) * profile.ccdStreak
                 trail = max(energy, trail * decay)
-                if (trail > 0.01f) pixels[index] = addGlow(color, trail * 0.14f, profile)
+                if (trail > 0.01f) pixels[index] = addGlow(color, trail * 0.17f, profile)
             }
         }
 
@@ -361,7 +393,7 @@ object RetroBitmapProcessor {
         val blurPixels = IntArray(width * height)
         source.getPixels(sourcePixels, 0, width, 0, 0, width, height)
         blurred.getPixels(blurPixels, 0, width, 0, 0, width, height)
-        val amount = strength.coerceIn(0f, 1f) * 0.78f
+        val amount = strength.coerceIn(0f, 1f) * 0.82f
 
         for (index in sourcePixels.indices) {
             sourcePixels[index] = unsharp(sourcePixels[index], blurPixels[index], amount)
@@ -372,14 +404,64 @@ object RetroBitmapProcessor {
         return source
     }
 
-    private fun applyCompressionBreakup(source: Bitmap, profile: CameraProfile): Bitmap {
+    private fun applyCompressionBreakup(
+        source: Bitmap,
+        profile: CameraProfile,
+        mode: ProcessingMode,
+    ): Bitmap {
         if (profile.macroblockStrength <= 0.01f && profile.chromaSmear <= 0.01f && profile.mosquitoNoise <= 0.01f) {
             return source
         }
         var working = applyMacroblocks(source, profile)
         working = applyChromaSmear(working, profile.chromaSmear)
         working = applyMosquitoNoise(working, profile)
+        if (mode == ProcessingMode.PREVIEW && profile.jpegArtifacts > 0.2f) {
+            working = applyFastJpegLook(working, profile)
+        }
         return working
+    }
+
+    private fun applyFastJpegLook(source: Bitmap, profile: CameraProfile): Bitmap {
+        val width = source.width
+        val height = source.height
+        val pixels = IntArray(width * height)
+        source.getPixels(pixels, 0, width, 0, 0, width, height)
+        val blockSize = 8
+        val strength = (profile.jpegArtifacts * 0.35f).coerceIn(0f, 0.5f)
+        var y = 0
+        while (y < height) {
+            var x = 0
+            while (x < width) {
+                val blockW = minOf(blockSize, width - x)
+                val blockH = minOf(blockSize, height - y)
+                var sumR = 0
+                var sumG = 0
+                var sumB = 0
+                var count = 0
+                for (by in 0 until blockH) {
+                    val row = (y + by) * width
+                    for (bx in 0 until blockW) {
+                        val c = pixels[row + x + bx]
+                        sumR += (c ushr 16) and 0xff
+                        sumG += (c ushr 8) and 0xff
+                        sumB += c and 0xff
+                        count++
+                    }
+                }
+                val avg = (0xff shl 24) or ((sumR / count) shl 16) or ((sumG / count) shl 8) or (sumB / count)
+                for (by in 0 until blockH) {
+                    val row = (y + by) * width
+                    for (bx in 0 until blockW) {
+                        val idx = row + x + bx
+                        pixels[idx] = blend(pixels[idx], avg, strength)
+                    }
+                }
+                x += blockSize
+            }
+            y += blockSize
+        }
+        source.setPixels(pixels, 0, width, 0, 0, width, height)
+        return source
     }
 
     private fun applyMacroblocks(source: Bitmap, profile: CameraProfile): Bitmap {
@@ -388,8 +470,8 @@ object RetroBitmapProcessor {
         val height = source.height
         val pixels = IntArray(width * height)
         source.getPixels(pixels, 0, width, 0, 0, width, height)
-        val blockSize = (8 + profile.macroblockStrength * 16f).roundToInt().coerceIn(8, 24)
-        val blendAmount = (profile.macroblockStrength * 0.85f).coerceIn(0f, 0.95f)
+        val blockSize = (8 + profile.macroblockStrength * 18f).roundToInt().coerceIn(8, 28)
+        val blendAmount = (profile.macroblockStrength * 0.92f).coerceIn(0f, 0.96f)
 
         var y = 0
         while (y < height) {
@@ -441,8 +523,8 @@ object RetroBitmapProcessor {
         val pixels = IntArray(width * height)
         val original = IntArray(width * height)
         source.getPixels(original, 0, width, 0, 0, width, height)
-        val offset = (1 + strength * 8f).roundToInt().coerceIn(1, 12)
-        val amount = (strength * 0.70f).coerceIn(0f, 0.90f)
+        val offset = (1 + strength * 10f).roundToInt().coerceIn(1, 14)
+        val amount = (strength * 0.78f).coerceIn(0f, 0.92f)
 
         for (y in 0 until height) {
             val row = y * width
@@ -469,8 +551,8 @@ object RetroBitmapProcessor {
         val height = source.height
         val pixels = IntArray(width * height)
         source.getPixels(pixels, 0, width, 0, 0, width, height)
-        val seed = (width * 31 + height * 17 + System.nanoTime()).toInt()
-        val amount = profile.mosquitoNoise.coerceIn(0f, 1f) * 0.08f
+        val seed = (width * 31 + height * 17).toInt()
+        val amount = profile.mosquitoNoise.coerceIn(0f, 1f) * 0.10f
 
         for (y in 1 until height - 1) {
             val row = y * width
@@ -484,13 +566,13 @@ object RetroBitmapProcessor {
                     abs(l - lumaOf(pixels[index - width])),
                     abs(l - lumaOf(pixels[index + width])),
                 )
-                val edgeMask = smoothstep(0.04f, 0.20f, edge)
+                val edgeMask = smoothstep(0.03f, 0.18f, edge)
                 if (edgeMask > 0f) {
-                    val n = (noise(seed, x, y, 11) - 0.5f) * amount * edgeMask * 2.5f
-                    val c = (noise(seed, x, y, 12) - 0.5f) * amount * edgeMask * 3.0f
+                    val n = (noise(seed, x, y, 11) - 0.5f) * amount * edgeMask * 2.8f
+                    val c = (noise(seed, x, y, 12) - 0.5f) * amount * edgeMask * 3.4f
                     val alpha = color ushr 24
                     val r = (((color ushr 16) and 0xff) / 255f) + n + c
-                    val g = (((color ushr 8) and 0xff) / 255f) + n * 0.6f
+                    val g = (((color ushr 8) and 0xff) / 255f) + n * 0.55f
                     val b = ((color and 0xff) / 255f) + n - c
                     pixels[index] = pack(alpha, r, g, b)
                 }
@@ -501,14 +583,22 @@ object RetroBitmapProcessor {
         return source
     }
 
-    private fun simulateJpegArtifacts(source: Bitmap, profile: CameraProfile): Bitmap {
+    private fun simulateJpegArtifacts(
+        source: Bitmap,
+        profile: CameraProfile,
+        mode: ProcessingMode,
+    ): Bitmap {
         if (profile.jpegArtifacts <= 0.04f) return source
-        val quality = (profile.jpegQuality - profile.jpegArtifacts * 34f)
+        if (mode == ProcessingMode.PREVIEW) return source
+
+        val quality = (profile.jpegQuality - profile.jpegArtifacts * 38f)
             .roundToInt()
-            .coerceIn(32, 94)
-        val bytes = ByteArrayOutputStream()
-        source.compress(Bitmap.CompressFormat.JPEG, quality, bytes)
-        val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes.toByteArray(), 0, bytes.size())
+            .coerceIn(28, 92)
+        val stream = jpegStream.get()!!
+        stream.reset()
+        source.compress(Bitmap.CompressFormat.JPEG, quality, stream)
+        val bytes = stream.toByteArray()
+        val decoded = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
         return decoded?.copy(Bitmap.Config.ARGB_8888, true) ?: source
     }
 
@@ -519,14 +609,14 @@ object RetroBitmapProcessor {
     private fun clipHighlight(value: Float, clipPoint: Float): Float {
         if (value <= clipPoint) return value
         val excess = (value - clipPoint) / (1f - clipPoint).coerceAtLeast(0.001f)
-        return clipPoint + smoothstep(0f, 1f, excess) * (1f - clipPoint)
+        return clipPoint + smoothstep(0f, 1f, excess) * (1f - clipPoint) * 0.65f
     }
 
     private fun addGlow(color: Int, amount: Float, profile: CameraProfile): Int {
         val alpha = color ushr 24
-        val r = (((color ushr 16) and 0xff) / 255f) + amount * (0.60f + profile.highlightRed)
-        val g = (((color ushr 8) and 0xff) / 255f) + amount * (0.44f + profile.highlightGreen)
-        val b = ((color and 0xff) / 255f) + amount * (0.50f + profile.highlightBlue + profile.coolHighlights * 0.4f)
+        val r = (((color ushr 16) and 0xff) / 255f) + amount * (0.64f + profile.highlightRed)
+        val g = (((color ushr 8) and 0xff) / 255f) + amount * (0.48f + profile.highlightGreen)
+        val b = ((color and 0xff) / 255f) + amount * (0.54f + profile.highlightBlue + profile.coolHighlights * 0.45f)
         return pack(alpha, r, g, b)
     }
 
