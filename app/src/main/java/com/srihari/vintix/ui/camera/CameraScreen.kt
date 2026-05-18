@@ -365,7 +365,7 @@ fun CameraScreen(
                 selectedProfile = selectedProfileName,
                 onProfileSelected = { selectedProfileName = it },
                 lastSavedUri = lastSavedUri,
-                isShutterEnabled = cameraAvailability is CameraAvailability.Ready && countdownValue == 0,
+                isShutterEnabled = cameraAvailability is CameraAvailability.Ready && countdownValue == 0 && captureState !is CaptureState.Capturing,
                 countdownValue = countdownValue,
                 onGalleryClick = onNavigateToGallery,
                 onShutterClick = {

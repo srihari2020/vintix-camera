@@ -33,12 +33,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontFamily
@@ -48,6 +50,23 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.srihari.vintix.effects.CameraProfile
 import com.srihari.vintix.effects.RetroBitmapProcessor
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+
+object ThumbnailCache {
+    private val cache = ConcurrentHashMap<String, ImageBitmap>()
+
+    suspend fun getOrGenerate(profile: CameraProfile): ImageBitmap = withContext(Dispatchers.Default) {
+        val key = profile.displayName
+        cache[key] ?: run {
+            val bitmap = createProcessedThumbnail(profile)
+            val imageBitmap = bitmap.asImageBitmap()
+            cache[key] = imageBitmap
+            imageBitmap
+        }
+    }
+}
 
 @Composable
 fun ProfileSelector(
@@ -111,8 +130,8 @@ private fun ProfileCard(
         animationSpec = tween(180),
         label = "profile-scale",
     )
-    val preview = remember(profile.displayName) {
-        createProcessedThumbnail(profile).asImageBitmap()
+    val preview by produceState<ImageBitmap?>(initialValue = null, profile.displayName) {
+        value = ThumbnailCache.getOrGenerate(profile)
     }
 
     Column(
@@ -125,15 +144,26 @@ private fun ProfileCard(
             .padding(5.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Image(
-            bitmap = preview,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clip(RoundedCornerShape(5.dp)),
-        )
+        val bmp = preview
+        if (bmp != null) {
+            Image(
+                bitmap = bmp,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(5.dp)),
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(5.dp))
+                    .background(Color.DarkGray),
+            )
+        }
         Text(
             text = profile.displayName,
             color = if (selected) Color(0xFFFFB36B) else Color.White.copy(alpha = 0.86f),

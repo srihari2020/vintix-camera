@@ -49,15 +49,20 @@ class PhotoCaptureManager(private val context: Context) {
             captureCallbackExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    processingExecutor.execute {
-                        processAndPublish(
-                            tempFile = tempFile,
-                            cameraProfile = cameraProfile,
-                            profileName = profileName,
-                            timestampStyle = timestampStyle,
-                            onSuccess = onSuccess,
-                            onError = onError,
-                        )
+                    try {
+                        processingExecutor.execute {
+                            processAndPublish(
+                                tempFile = tempFile,
+                                cameraProfile = cameraProfile,
+                                profileName = profileName,
+                                timestampStyle = timestampStyle,
+                                onSuccess = onSuccess,
+                                onError = onError,
+                            )
+                        }
+                    } catch (t: Throwable) {
+                        tempFile.delete()
+                        postError(onError, Exception("Executor rejected task", t))
                     }
                 }
 
@@ -120,9 +125,9 @@ class PhotoCaptureManager(private val context: Context) {
                 profileName = profileName,
             )
             postSuccess(onSuccess, finalUri)
-        } catch (e: Exception) {
-            Log.e(TAG, "Capture processing failed", e)
-            postError(onError, e)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Capture processing failed", t)
+            postError(onError, if (t is Exception) t else Exception(t))
         } finally {
             tempFile.delete()
             decoded?.recycle()
