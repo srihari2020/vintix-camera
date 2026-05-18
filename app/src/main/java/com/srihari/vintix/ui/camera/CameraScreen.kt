@@ -137,8 +137,8 @@ fun CameraScreen(
 
     val profiles = remember { CameraProfiles.all }
     val profileNames = remember(profiles) { profiles.map { it.displayName } }
-    var selectedProfileName by rememberSaveable { mutableStateOf(CameraProfiles.CyberShot.displayName) }
-    val selectedBaseProfile = profiles.firstOrNull { it.displayName == selectedProfileName } ?: CameraProfiles.CyberShot
+    var selectedProfileName by rememberSaveable { mutableStateOf(CameraProfiles.CyberShot2003.displayName) }
+    val selectedBaseProfile = profiles.firstOrNull { it.displayName == selectedProfileName } ?: CameraProfiles.CyberShot2003
     val activeProfile = selectedBaseProfile
         .copy(aspectRatio = currentAspectRatio)
         .withVintixSettings(appSettings)
@@ -148,7 +148,6 @@ fun CameraScreen(
     var focusPoint by remember { mutableStateOf<Offset?>(null) }
     var lastSavedUri by remember { mutableStateOf<android.net.Uri?>(null) }
     var countdownValue by remember { mutableIntStateOf(0) }
-    var filterSwipeDrag by remember { mutableFloatStateOf(0f) }
     val focusAlpha = remember { Animatable(0f) }
 
     val photoCaptureManager = remember { PhotoCaptureManager(context) }
@@ -362,7 +361,7 @@ fun CameraScreen(
             )
 
             BottomControls(
-                profiles = profileNames,
+                profiles = profiles,
                 selectedProfile = selectedProfileName,
                 onProfileSelected = { selectedProfileName = it },
                 lastSavedUri = lastSavedUri,
@@ -534,7 +533,7 @@ private fun TopStatusBar(
 
 @Composable
 private fun BottomControls(
-    profiles: List<String>,
+    profiles: List<CameraProfile>,
     selectedProfile: String,
     onProfileSelected: (String) -> Unit,
     lastSavedUri: android.net.Uri?,
