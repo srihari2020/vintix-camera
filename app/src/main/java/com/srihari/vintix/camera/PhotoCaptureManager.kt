@@ -7,184 +7,179 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.net.Uri
 import android.os.Build
+import android.os.Environment
 import android.provider.MediaStore
+import android.util.Log
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.core.content.ContextCompat
 import androidx.exifinterface.media.ExifInterface
-import android.util.Log
-import com.srihari.vintix.rendering.CameraProfile
-import com.srihari.vintix.rendering.RetroPhotoGlPipeline
+import com.srihari.vintix.effects.CameraProfile
+import com.srihari.vintix.effects.RetroBitmapProcessor
+import com.srihari.vintix.effects.timestamp.TimestampStyle
 import java.io.File
+import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
-import com.srihari.vintix.telemetry.PerformanceTelemetry
 
-/**
- * Handles photo capture and MediaStore persistence.
- * Stills are decoded from CameraX JPEG output, processed through the same OpenGL retro pipeline
- * as preview ([RetroPhotoGlPipeline]), then re-encoded to JPEG — no SurfaceView screenshot.
- */
 class PhotoCaptureManager(private val context: Context) {
+    private val captureCallbackExecutor = Executors.newSingleThreadExecutor()
+    private val processingExecutor = Executors.newFixedThreadPool(2)
 
-    companion object {
-        private const val FILENAME_FORMAT = "yyyyMMdd_HHmmss"
-        private const val FILENAME_PREFIX = "VINTIX_"
-        private const val MIME_TYPE = "image/jpeg"
-        private const val RELATIVE_PATH = "Pictures/Vintix"
-    }
-
-    private val photoExecutor = Executors.newSingleThreadExecutor()
-
-    /**
-     * Captures a photo using CameraX and processes it through the retro GL pipeline.
-     * This method is now non-blocking to allow consecutive captures.
-     */
     fun capturePhoto(
         imageCapture: ImageCapture,
         cameraProfile: CameraProfile,
         profileName: String,
-        noisePhase: Float,
-        isFrontCamera: Boolean,
-        timestampStyle: com.srihari.vintix.rendering.timestamp.TimestampStyle?,
+        timestampStyle: TimestampStyle?,
         onSuccess: (Uri) -> Unit,
-        onError: (Exception) -> Unit
+        onError: (Exception) -> Unit,
     ) {
-        val name = "VINTIX_${System.currentTimeMillis()}"
-        val temp = File.createTempFile(name, ".jpg", context.cacheDir)
-        val outputOptions = ImageCapture.OutputFileOptions.Builder(temp).build()
+        val tempFile = File.createTempFile("vintix_capture_", ".jpg", context.cacheDir)
+        val outputOptions = ImageCapture.OutputFileOptions.Builder(tempFile)
+            .setMetadata(ImageCapture.Metadata().apply {
+                isReversedHorizontal = false
+            })
+            .build()
 
         imageCapture.takePicture(
             outputOptions,
-            photoExecutor,
+            captureCallbackExecutor,
             object : ImageCapture.OnImageSavedCallback {
                 override fun onImageSaved(output: ImageCapture.OutputFileResults) {
-                    try {
-                        val savedUri = output.savedUri ?: Uri.fromFile(temp)
-                        
-                        // 1. Load and handle sensor rotation immediately
-                        var bitmap = loadBitmapFromUri(context, savedUri) 
-                            ?: throw IllegalStateException("Failed to load captured bitmap")
-                        
-                        bitmap = applyExifRotation(temp.absolutePath, bitmap)
-                        
-                        // 2. Crop to aspect ratio & Scale
-                        bitmap = applyCropAndScale(bitmap, cameraProfile)
-
-                        // 3. Apply Retro Pipeline (OpenGL processing)
-                        // Note: isFrontCamera is false here because exported images 
-                        // should NOT be mirrored, unlike the live preview.
-                        val processed = RetroPhotoGlPipeline.processBitmap(
-                            bitmap, 
-                            cameraProfile, 
-                            noisePhase,
-                            false 
+                    processingExecutor.execute {
+                        processAndPublish(
+                            tempFile = tempFile,
+                            cameraProfile = cameraProfile,
+                            profileName = profileName,
+                            timestampStyle = timestampStyle,
+                            onSuccess = onSuccess,
+                            onError = onError,
                         )
-                        
-                        // 4. Save to MediaStore
-                        val finalUri = insertProcessedJpeg(
-                            processed, 
-                            90, // Quality
-                            profileName
-                        )
-                        
-                        // Cleanup
-                        temp.delete()
-                        if (!bitmap.isRecycled) bitmap.recycle()
-                        if (!processed.isRecycled) processed.recycle()
-
-                        ContextCompat.getMainExecutor(context).execute { onSuccess(finalUri) }
-                    } catch (e: Exception) {
-                        Log.e("PhotoCaptureManager", "Error processing captured photo", e)
-                        temp.delete()
-                        ContextCompat.getMainExecutor(context).execute { onError(e) }
                     }
                 }
 
                 override fun onError(exception: ImageCaptureException) {
-                    Log.e("PhotoCaptureManager", "CameraX capture failed", exception)
-                    temp.delete()
-                    ContextCompat.getMainExecutor(context).execute { onError(exception) }
+                    tempFile.delete()
+                    postError(onError, exception)
                 }
-            }
+            },
         )
     }
 
     fun shutdown() {
-        photoExecutor.shutdown()
+        captureCallbackExecutor.shutdown()
+        processingExecutor.shutdown()
     }
 
-    private fun loadBitmapFromUri(context: Context, uri: Uri): Bitmap? {
-        return try {
-            context.contentResolver.openInputStream(uri)?.use { 
-                BitmapFactory.decodeStream(it)
+    private fun processAndPublish(
+        tempFile: File,
+        cameraProfile: CameraProfile,
+        profileName: String,
+        timestampStyle: TimestampStyle?,
+        onSuccess: (Uri) -> Unit,
+        onError: (Exception) -> Unit,
+    ) {
+        var decoded: Bitmap? = null
+        var oriented: Bitmap? = null
+        var cropped: Bitmap? = null
+        var processed: Bitmap? = null
+
+        try {
+            decoded = BitmapFactory.decodeFile(tempFile.absolutePath)
+                ?: throw IllegalStateException("Failed to decode captured JPEG")
+
+            oriented = applyExifRotation(tempFile.absolutePath, decoded)
+            if (oriented !== decoded) {
+                decoded.recycle()
+                decoded = null
             }
+
+            cropped = cropAndScale(oriented, cameraProfile)
+            if (cropped !== oriented) {
+                oriented.recycle()
+                oriented = null
+            }
+
+            processed = RetroBitmapProcessor.process(
+                input = cropped,
+                profile = cameraProfile,
+                timestampStyle = timestampStyle,
+                captureDate = Date(),
+            )
+            if (processed !== cropped) {
+                cropped.recycle()
+                cropped = null
+            }
+
+            val finalUri = insertProcessedJpeg(
+                bitmap = processed,
+                quality = cameraProfile.jpegQuality,
+                profileName = profileName,
+            )
+            postSuccess(onSuccess, finalUri)
         } catch (e: Exception) {
-            Log.e("PhotoCaptureManager", "Failed to load bitmap from $uri", e)
-            null
+            Log.e(TAG, "Capture processing failed", e)
+            postError(onError, e)
+        } finally {
+            tempFile.delete()
+            decoded?.recycle()
+            oriented?.recycle()
+            cropped?.recycle()
+            processed?.recycle()
         }
     }
 
-    private fun applyCropAndScale(bitmap: Bitmap, profile: CameraProfile): Bitmap {
-        val w = bitmap.width
-        val h = bitmap.height
-        val isPortrait = w < h
-        val targetRatio = if (isPortrait) 1f / profile.aspectRatio.ratio else profile.aspectRatio.ratio
-        
-        var cropW = w
-        var cropH = h
-        
-        val currentRatio = w.toFloat() / h.toFloat()
-        if (currentRatio > targetRatio + 0.01f) {
-            cropW = (h * targetRatio).toInt()
-        } else if (currentRatio < targetRatio - 0.01f) {
-            cropH = (w / targetRatio).toInt()
+    private fun cropAndScale(bitmap: Bitmap, profile: CameraProfile): Bitmap {
+        val width = bitmap.width
+        val height = bitmap.height
+        val targetRatio = if (width < height) {
+            1f / profile.aspectRatio.ratio
+        } else {
+            profile.aspectRatio.ratio
         }
-        
-        val cropX = (w - cropW) / 2
-        val cropY = (h - cropH) / 2
-        
-        var finalW = cropW
-        var finalH = cropH
-        
+
+        var cropWidth = width
+        var cropHeight = height
+        val currentRatio = width.toFloat() / height.toFloat()
+
+        if (currentRatio > targetRatio + 0.01f) {
+            cropWidth = (height * targetRatio).toInt()
+        } else if (currentRatio < targetRatio - 0.01f) {
+            cropHeight = (width / targetRatio).toInt()
+        }
+
+        val cropX = (width - cropWidth) / 2
+        val cropY = (height - cropHeight) / 2
+        var outputWidth = cropWidth
+        var outputHeight = cropHeight
+
         val maxResolution = profile.exportResolution
         if (maxResolution != null) {
-            val longSide = Math.max(cropW, cropH)
+            val longSide = maxOf(cropWidth, cropHeight)
             if (longSide > maxResolution) {
                 val scale = maxResolution.toFloat() / longSide
-                finalW = (cropW * scale).toInt()
-                finalH = (cropH * scale).toInt()
+                outputWidth = maxOf(1, (cropWidth * scale).toInt())
+                outputHeight = maxOf(1, (cropHeight * scale).toInt())
             }
         }
-        
-        if (cropW == w && cropH == h && finalW == cropW && finalH == cropH) return bitmap
-        
-        val matrix = Matrix()
-        if (finalW != cropW || finalH != cropH) {
-            matrix.postScale(finalW.toFloat() / cropW, finalH.toFloat() / cropH)
+
+        if (cropWidth == width && cropHeight == height && outputWidth == cropWidth && outputHeight == cropHeight) {
+            return bitmap
         }
-        
-        return Bitmap.createBitmap(bitmap, cropX, cropY, cropW, cropH, matrix, true)
+
+        val matrix = Matrix()
+        if (outputWidth != cropWidth || outputHeight != cropHeight) {
+            matrix.postScale(outputWidth.toFloat() / cropWidth, outputHeight.toFloat() / cropHeight)
+        }
+        return Bitmap.createBitmap(bitmap, cropX, cropY, cropWidth, cropHeight, matrix, true)
     }
 
     private fun applyExifRotation(path: String, bitmap: Bitmap): Bitmap {
-        val exif = try {
-            ExifInterface(path)
-        } catch (_: Exception) {
-            null
-        } ?: return bitmap
-
-        val rotation = exif.rotationDegrees
-        if (rotation == 0) {
-            // Check for flipping/mirroring if we ever want to support it, 
-            // but for now we just handle 90/180/270.
-            val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
-            if (orientation == ExifInterface.ORIENTATION_NORMAL) return bitmap
-        }
-        
+        val rotation = runCatching { ExifInterface(path).rotationDegrees }.getOrDefault(0)
+        if (rotation == 0) return bitmap
         val matrix = Matrix().apply { postRotate(rotation.toFloat()) }
         return Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
     }
@@ -192,46 +187,51 @@ class PhotoCaptureManager(private val context: Context) {
     private fun insertProcessedJpeg(bitmap: Bitmap, quality: Int, profileName: String): Uri {
         val now = Date()
         val timestamp = SimpleDateFormat(FILENAME_FORMAT, Locale.US).format(now)
-        val fileName = "$FILENAME_PREFIX$timestamp"
+        val fileName = "$FILENAME_PREFIX$timestamp.jpg"
 
         val contentValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
             put(MediaStore.MediaColumns.MIME_TYPE, MIME_TYPE)
-            put(MediaStore.MediaColumns.RELATIVE_PATH, RELATIVE_PATH)
-            put(MediaStore.MediaColumns.DATE_TAKEN, now.time)
             put(MediaStore.Images.Media.TITLE, "Vintix - $profileName")
+            put(MediaStore.Images.Media.DATE_TAKEN, now.time)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, RELATIVE_PATH)
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
+            } else {
+                val directory = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES),
+                    "Vintix",
+                )
+                if (!directory.exists()) directory.mkdirs()
+                put(MediaStore.Images.Media.DATA, File(directory, fileName).absolutePath)
             }
         }
 
-        val tempExifFile = File.createTempFile("vintix_exif_", ".jpg", context.cacheDir)
+        val tempExifFile = File.createTempFile("vintix_export_", ".jpg", context.cacheDir)
         try {
-            java.io.FileOutputStream(tempExifFile).use { out ->
-                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality, out)) {
-                    throw IllegalStateException("JPEG compress to temp file failed")
+            FileOutputStream(tempExifFile).use { output ->
+                if (!bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(35, 96), output)) {
+                    throw IllegalStateException("JPEG compression failed")
                 }
             }
 
-            try {
+            runCatching {
                 val exif = ExifInterface(tempExifFile.absolutePath)
+                exif.setAttribute(ExifInterface.TAG_MAKE, "Vintix")
                 exif.setAttribute(ExifInterface.TAG_MODEL, "Vintix - $profileName")
                 exif.saveAttributes()
-            } catch (e: Exception) {
-                Log.w("PhotoCaptureManager", "Failed to write EXIF data", e)
             }
 
             val resolver = context.contentResolver
-            val collection = MediaStore.Images.Media.EXTERNAL_CONTENT_URI
-            val uri = resolver.insert(collection, contentValues)
+            val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, contentValues)
                 ?: throw IllegalStateException("MediaStore insert failed")
 
             try {
-                resolver.openOutputStream(uri)?.use { out ->
-                    java.io.FileInputStream(tempExifFile).use { input ->
-                        input.copyTo(out)
+                resolver.openOutputStream(uri)?.use { output ->
+                    FileInputStream(tempExifFile).use { input ->
+                        input.copyTo(output)
                     }
-                } ?: throw IllegalStateException("Could not open output stream for $uri")
+                } ?: throw IllegalStateException("Unable to open MediaStore output stream")
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val publishedValues = ContentValues().apply {
@@ -247,5 +247,21 @@ class PhotoCaptureManager(private val context: Context) {
         } finally {
             tempExifFile.delete()
         }
+    }
+
+    private fun postSuccess(onSuccess: (Uri) -> Unit, uri: Uri) {
+        ContextCompat.getMainExecutor(context).execute { onSuccess(uri) }
+    }
+
+    private fun postError(onError: (Exception) -> Unit, exception: Exception) {
+        ContextCompat.getMainExecutor(context).execute { onError(exception) }
+    }
+
+    private companion object {
+        private const val TAG = "PhotoCaptureManager"
+        private const val FILENAME_PREFIX = "VINTIX_"
+        private const val FILENAME_FORMAT = "yyyyMMdd_HHmmss_SSS"
+        private const val MIME_TYPE = "image/jpeg"
+        private const val RELATIVE_PATH = "Pictures/Vintix"
     }
 }

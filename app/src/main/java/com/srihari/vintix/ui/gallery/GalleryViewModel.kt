@@ -2,6 +2,7 @@ package com.srihari.vintix.ui.gallery
 
 import android.app.Application
 import android.net.Uri
+import android.os.Build
 import android.provider.MediaStore
 import androidx.exifinterface.media.ExifInterface
 import androidx.lifecycle.AndroidViewModel
@@ -33,13 +34,19 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             val projection = arrayOf(
                 MediaStore.Images.Media._ID,
                 MediaStore.Images.Media.DATE_ADDED,
-                MediaStore.Images.Media.RELATIVE_PATH,
                 MediaStore.Images.Media.TITLE
             )
 
-            // Only fetch from our Vintix folder
-            val selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
-            val selectionArgs = arrayOf("%Pictures/Vintix%")
+            val selection: String?
+            val selectionArgs: Array<String>?
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                selection = "${MediaStore.Images.Media.RELATIVE_PATH} LIKE ?"
+                selectionArgs = arrayOf("%Pictures/Vintix%")
+            } else {
+                @Suppress("DEPRECATION")
+                selection = "${MediaStore.Images.Media.DATA} LIKE ?"
+                selectionArgs = arrayOf("%/Pictures/Vintix/%")
+            }
             val sortOrder = "${MediaStore.Images.Media.DATE_ADDED} DESC"
 
             resolver.query(
@@ -89,6 +96,16 @@ class GalleryViewModel(application: Application) : AndroidViewModel(application)
             }
 
             _photos.value = photoList
+        }
+    }
+
+    fun deletePhoto(uri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val context = getApplication<Application>()
+            runCatching {
+                context.contentResolver.delete(uri, null, null)
+            }
+            loadPhotos()
         }
     }
 

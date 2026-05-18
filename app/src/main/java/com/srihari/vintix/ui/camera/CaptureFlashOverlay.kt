@@ -18,7 +18,7 @@ import androidx.compose.ui.graphics.Color
  */
 @Composable
 fun CaptureFlashOverlay(
-    trigger: Boolean,
+    trigger: Long?,
     durationMs: Int,
     onAnimationComplete: () -> Unit,
     modifier: Modifier = Modifier
@@ -26,7 +26,7 @@ fun CaptureFlashOverlay(
     val alpha = remember { Animatable(0f) }
 
     LaunchedEffect(trigger) {
-        if (trigger) {
+        if (trigger != null) {
             if (durationMs > 0) {
                 alpha.snapTo(0f)
                 alpha.animateTo(

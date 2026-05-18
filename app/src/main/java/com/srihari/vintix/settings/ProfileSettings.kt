@@ -1,8 +1,8 @@
 package com.srihari.vintix.settings
 
-import com.srihari.vintix.rendering.CameraProfile
-import com.srihari.vintix.rendering.timestamp.TimestampStyle
-import com.srihari.vintix.rendering.timestamp.TimestampStyles
+import com.srihari.vintix.effects.CameraProfile
+import com.srihari.vintix.effects.timestamp.TimestampStyle
+import com.srihari.vintix.effects.timestamp.TimestampStyles
 
 fun CameraProfile.withVintixSettings(settings: VintixSettings): CameraProfile =
     copy(

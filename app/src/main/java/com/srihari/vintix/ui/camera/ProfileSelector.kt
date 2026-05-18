@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -14,7 +13,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,14 +38,14 @@ fun ProfileSelector(
         }
     }
 
-    // Use a fixed height and center-focused layout
-    Box(modifier = modifier.fillMaxWidth().height(64.dp)) {
+    BoxWithConstraints(modifier = modifier.fillMaxWidth().height(58.dp)) {
+        val sidePadding = if (maxWidth > 180.dp) (maxWidth / 2) - 58.dp else 20.dp
         LazyRow(
             state = listState,
             flingBehavior = snappingBehavior,
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(horizontal = 160.dp), // Approximate centering
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(horizontal = sidePadding),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             items(profiles) { profileName ->

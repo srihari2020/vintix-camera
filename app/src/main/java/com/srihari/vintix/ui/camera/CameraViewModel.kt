@@ -5,6 +5,8 @@ import android.util.Log
 import androidx.camera.core.ImageCapture
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.srihari.vintix.effects.AspectRatio
+import com.srihari.vintix.effects.FeedbackBehavior
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -12,10 +14,9 @@ import kotlinx.coroutines.launch
 
 private const val TAG = "CameraViewModel"
 
-/** Represents the current state of photo capture. */
 sealed interface CaptureState {
     data object Idle : CaptureState
-    data class Capturing(val feedback: com.srihari.vintix.rendering.FeedbackBehavior) : CaptureState
+    data class Capturing(val feedback: FeedbackBehavior, val sequence: Long) : CaptureState
     data class Success(val uri: Uri) : CaptureState
     data class Error(val message: String) : CaptureState
 }
@@ -27,7 +28,6 @@ sealed interface CameraAvailability {
 }
 
 class CameraViewModel : ViewModel() {
-
     private val _isCameraPermissionGranted = MutableStateFlow(false)
     val isCameraPermissionGranted: StateFlow<Boolean> = _isCameraPermissionGranted.asStateFlow()
 
@@ -37,14 +37,6 @@ class CameraViewModel : ViewModel() {
     private val _cameraAvailability = MutableStateFlow<CameraAvailability>(CameraAvailability.Initializing)
     val cameraAvailability: StateFlow<CameraAvailability> = _cameraAvailability.asStateFlow()
 
-    /**
-     * When true, the GL pipeline has failed and we should use CameraPreview (PreviewView).
-     * Stored in ViewModel so the flag survives configuration changes (orientation, etc.).
-     */
-    private val _safeModeActive = MutableStateFlow(false)
-    val safeModeActive: StateFlow<Boolean> = _safeModeActive.asStateFlow()
-
-    /** Incremented on each retry to force CameraPreview recomposition. */
     private val _retryKey = MutableStateFlow(0)
     val retryKey: StateFlow<Int> = _retryKey.asStateFlow()
 
@@ -60,14 +52,17 @@ class CameraViewModel : ViewModel() {
     private val _exposureIndex = MutableStateFlow(0)
     val exposureIndex: StateFlow<Int> = _exposureIndex.asStateFlow()
 
-    private val _aspectRatio = MutableStateFlow(com.srihari.vintix.rendering.AspectRatio.RATIO_4_3)
-    val aspectRatio: StateFlow<com.srihari.vintix.rendering.AspectRatio> = _aspectRatio.asStateFlow()
+    private val _aspectRatio = MutableStateFlow(AspectRatio.RATIO_4_3)
+    val aspectRatio: StateFlow<AspectRatio> = _aspectRatio.asStateFlow()
 
     private val _timerSeconds = MutableStateFlow(0)
     val timerSeconds: StateFlow<Int> = _timerSeconds.asStateFlow()
 
     private val _gridEnabled = MutableStateFlow(false)
     val gridEnabled: StateFlow<Boolean> = _gridEnabled.asStateFlow()
+
+    private val _hdrPlaceholderEnabled = MutableStateFlow(false)
+    val hdrPlaceholderEnabled: StateFlow<Boolean> = _hdrPlaceholderEnabled.asStateFlow()
 
     fun onPermissionResult(isGranted: Boolean) {
         _isCameraPermissionGranted.value = isGranted
@@ -88,8 +83,11 @@ class CameraViewModel : ViewModel() {
         _exposureIndex.value = index
     }
 
-    fun setAspectRatio(ratio: com.srihari.vintix.rendering.AspectRatio) {
-        _aspectRatio.value = ratio
+    fun setAspectRatio(ratio: AspectRatio) {
+        if (_aspectRatio.value != ratio) {
+            _aspectRatio.value = ratio
+            _cameraAvailability.value = CameraAvailability.Initializing
+        }
     }
 
     fun setTimerSeconds(seconds: Int) {
@@ -100,16 +98,19 @@ class CameraViewModel : ViewModel() {
         _gridEnabled.value = !_gridEnabled.value
     }
 
-    fun onCaptureStarted(feedback: com.srihari.vintix.rendering.FeedbackBehavior) {
-        _captureState.value = CaptureState.Capturing(feedback)
-        
-        // Safety timeout to ensure shutter is NEVER permanently disabled.
-        // 5s is generous for any capture+export path, but short enough
-        // that users don't experience a locked shutter.
+    fun toggleHdrPlaceholder() {
+        _hdrPlaceholderEnabled.value = !_hdrPlaceholderEnabled.value
+    }
+
+    fun onCaptureStarted(feedback: FeedbackBehavior) {
+        val sequence = System.nanoTime()
+        _captureState.value = CaptureState.Capturing(feedback, sequence)
+
         viewModelScope.launch {
             kotlinx.coroutines.delay(5_000)
-            if (_captureState.value is CaptureState.Capturing) {
-                Log.w(TAG, "Capture safety timeout reached — resetting state")
+            val currentCapture = _captureState.value as? CaptureState.Capturing
+            if (currentCapture?.sequence == sequence) {
+                Log.w(TAG, "Capture safety timeout reached - resetting state")
                 resetCaptureState()
             }
         }
@@ -124,7 +125,6 @@ class CameraViewModel : ViewModel() {
     }
 
     fun onCameraReady() {
-        Log.d(TAG, "Camera ready — availability=READY")
         _cameraAvailability.value = CameraAvailability.Ready
     }
 
@@ -133,22 +133,7 @@ class CameraViewModel : ViewModel() {
         _cameraAvailability.value = CameraAvailability.Error(message)
     }
 
-    /**
-     * Called when the GL pipeline fails. Activates safe mode silently.
-     */
-    fun activateSafeMode(reason: String) {
-        Log.w(TAG, "Activating SILENT SAFE MODE: $reason")
-        _safeModeActive.value = true
-        // Keep camera availability as is, or reset if needed for PreviewView
-        _cameraAvailability.value = CameraAvailability.Initializing
-    }
-
-    /**
-     * Reset camera to Initializing so a fresh bind attempt can proceed.
-     * Also increments retryKey to force CameraPreview recomposition.
-     */
     fun retryCamera() {
-        Log.d(TAG, "Retrying camera — resetting to Initializing")
         _cameraAvailability.value = CameraAvailability.Initializing
         _retryKey.value++
     }
@@ -159,8 +144,6 @@ class CameraViewModel : ViewModel() {
     }
 
     fun resetCaptureState() {
-        // Reset to Idle to re-enable the shutter button.
-        // This is safe because we only call it after Success, Error, or a safety timeout.
         _captureState.value = CaptureState.Idle
     }
 }
